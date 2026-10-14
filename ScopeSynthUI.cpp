@@ -1,7 +1,8 @@
 // The window, styled like a terminal: the CRT scope on the left showing what
 // you hear, then the two oscillators, the ENV and LFO, voice settings, and a
 // keyboard along the bottom.
-// Controls are bar meters: drag up/down to change, scroll to nudge,
+// Controls are knobs, or faders for the envelope and volume: drag up/down to
+// change, scroll to nudge,
 // right-click for the default.
 // Linking like Serum: drag the ENV or LFO handle onto a control. It gets a
 // coloured range line and a tag; drag the tag up/down to set how much,
@@ -896,7 +897,7 @@ private:
         label(kTube / 2, kTube - 12, "scope-synth", kDim, 10, ALIGN_CENTER | ALIGN_MIDDLE);
     }
 
-    // ---- controls: bar meters, [x] switches, < choices >
+    // ---- controls: knobs, faders, [x] switches, < choices >
     void valueText(int p, char* out, size_t n) const
     {
         const float v = fValues[p];
@@ -956,26 +957,18 @@ private:
             label(cx, c.y + 38, (std::string("< ") + buf + " >").c_str(), kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
             return;
         }
-        // the bar: 8 cells, lit up to the setting
-        const int cells = 8;
-        const float bw = std::min(c.w - 10, 48.0f), bx = cx - bw / 2, by = c.y + 28, bh = 11;
         const float n = toNorm(p, fValues[p]);
-        const float cw = bw / cells;
-        for (int i = 0; i < cells; ++i) {
-            const float f = std::clamp(n * cells - i, 0.0f, 1.0f);
-            fillBox({bx + i * cw + 0.5f, by, cw - 1, bh}, kFaint);
-            if (f > 0) fillBox({bx + i * cw + 0.5f, by, (cw - 1) * f, bh}, dim ? kDim : kFg);
-        }
-        if (d >= 0) {
+        const Color& col = dim ? kDim : kFg;
+        // a link's range (how far it can move the control; the LFO swings both ways) and its tag
+        auto links = [&](auto drawRange) {
             bool linked = false;
-            for (int src = 0; src < kNumSources; ++src) {
+            for (int src = 0; d >= 0 && src < kNumSources; ++src) {
                 const float a = fValues[modParam(src, d)];
                 if (a == 0) continue;
                 linked = true;
-                // the range line: how far this link can move it (the LFO swings both ways)
                 const float lo = std::clamp(src == kSrcLfo ? n - std::fabs(a) : std::min(n, n + a), 0.0f, 1.0f);
                 const float hi = std::clamp(src == kSrcLfo ? n + std::fabs(a) : std::max(n, n + a), 0.0f, 1.0f);
-                fillBox({bx + bw * lo, by + bh + 3 + 4 * src, std::max(bw * (hi - lo), 1.0f), 2}, kSrcCol[src]);
+                drawRange(src, lo, hi);
                 Box t;
                 tagBox(c, src, t);
                 outline(t, kSrcCol[src]);
@@ -983,11 +976,72 @@ private:
                 std::snprintf(tb, sizeof(tb), "%c%+d", kSrcName[src][0], (int)std::lround(a * 100));
                 label(t.x + t.w / 2, t.y + t.h / 2 + 0.5f, tb, kSrcCol[src], 8.5f, ALIGN_CENTER | ALIGN_MIDDLE);
             }
+            return linked;
+        };
+        if (isFader(p)) {
+            // a vertical fader: a track, lit from the bottom up to a thumb
+            const float top = c.y + 20, bottom = c.y + 52, ty = bottom - (bottom - top) * n;
+            fillBox({cx - 1, top, 2, bottom - top}, kFaint);
+            fillBox({cx - 1, ty, 2, bottom - ty}, col);
+            const bool linked = links([&](int src, float lo, float hi) {
+                fillBox({cx + 6 + 3 * src, bottom - (bottom - top) * hi, 2, std::max((bottom - top) * (hi - lo), 1.0f)}, kSrcCol[src]);
+            });
+            fillBox({cx - 9, ty - 2.5f, 18, 5}, kBg);
+            outline({cx - 9, ty - 2.5f, 18, 5}, col);
             if (linked)  // where the links have it right now
-                fillBox({bx + bw * toNorm(p, liveValue(p)) - 1, by - 3, 2, bh + 6}, kBright);
+                fillBox({cx - 12, bottom - (bottom - top) * toNorm(p, liveValue(p)) - 1, 24, 2}, kBright);
+            label(cx, c.y + 62, buf, dim ? kFaint : kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
+            return;
         }
-        label(cx, c.y + 60, buf, dim ? kFaint : kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
+        // a knob: a 270-degree track, lit up to the pointer
+        const float r = 12, ky = c.y + 34;
+        const float a0 = 0.75f * 3.14159265f, span = 1.5f * 3.14159265f, a = a0 + span * n;
+        lineCap(BUTT);
+        beginPath();
+        arc(cx, ky, r + 3, a0, a0 + span, CW);
+        strokeColor(kFaint);
+        strokeWidth(2);
+        stroke();
+        if (n > 0.002f) {
+            beginPath();
+            arc(cx, ky, r + 3, a0, a, CW);
+            strokeColor(col);
+            strokeWidth(2);
+            stroke();
+        }
+        const bool linked = links([&](int src, float lo, float hi) {
+            if (hi - lo < 0.002f) return;
+            beginPath();
+            arc(cx, ky, r + 6 + 3 * src, a0 + span * lo, a0 + span * hi, CW);
+            strokeColor(kSrcCol[src]);
+            strokeWidth(1.5f);
+            stroke();
+        });
+        beginPath();
+        circle(cx, ky, r - 2);
+        fillColor(kBg);
+        fill();
+        strokeColor(dim ? kFaint : kDim);
+        strokeWidth(1);
+        stroke();
+        beginPath();
+        moveTo(cx + std::cos(a) * 2, ky + std::sin(a) * 2);
+        lineTo(cx + std::cos(a) * (r - 3), ky + std::sin(a) * (r - 3));
+        strokeColor(dim ? kDim : kBright);
+        strokeWidth(1.5f);
+        stroke();
+        if (linked) {  // where the links have it right now
+            const float la = a0 + span * toNorm(p, liveValue(p));
+            beginPath();
+            circle(cx + std::cos(la) * (r + 3), ky + std::sin(la) * (r + 3), 2);
+            fillColor(kBright);
+            fill();
+        }
+        label(cx, c.y + 62, buf, dim ? kFaint : kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
     }
+
+    // the envelope and the main volume are faders; everything else that turns is a knob
+    static bool isFader(int p) { return (p >= kAttack && p <= kRelease) || p == kVolume; }
 
     // testing hook: the frame just drawn
     void dumpFrontBuffer(const std::string& path)
