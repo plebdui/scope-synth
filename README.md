@@ -7,10 +7,12 @@ fast the beam goes round. The tube shows exactly what you hear.
 
 ![Scope Synth playing PHOSPHOR LEAD](screenshots/main.png)
 
-| | | | |
-|:-:|:-:|:-:|:-:|
-| [![AURORA PAD, its LFO cables, PINK theme](screenshots/thumbs/pad.png)](screenshots/pad.png) | [![ARP SPARKLE: an arp drawn on the LFO, CYAN theme](screenshots/thumbs/arp.png)](screenshots/arp.png) | [![The preset list, AMBER theme](screenshots/thumbs/presets.png)](screenshots/presets.png) | [![Typing your own shape, WHITE theme](screenshots/thumbs/editor.png)](screenshots/editor.png) |
-| Pad with LFO cables | Arp drawn on the LFO | Presets | Your own shapes |
+| | | |
+|:-:|:-:|:-:|
+| [![AURORA PAD, its LFO cables, PINK theme](screenshots/thumbs/pad.png)](screenshots/pad.png) | [![ARP SPARKLE: an arp drawn on the LFO, CYAN theme](screenshots/thumbs/arp.png)](screenshots/arp.png) | [![SCOPE ART / SPINNING CUBE, AMBER theme](screenshots/thumbs/art.png)](screenshots/art.png) |
+| Pad with LFO cables | Arp drawn on the LFO | Scope art |
+| [![The preset menu](screenshots/thumbs/presets.png)](screenshots/presets.png) | [![Typing your own shape, WHITE theme](screenshots/thumbs/editor.png)](screenshots/editor.png) | |
+| 142 presets | Your own shapes | |
 
 - **2 oscillators**, each with a small preview of its shape and MORPH, OCT,
   SEMI, FINE, ROTATE, LEVEL and VOICES (1-8 copies detuned across 20 cents).
@@ -35,8 +37,12 @@ fast the beam goes round. The tube shows exactly what you hear.
   how much (negative works too), right-click it to unlink.
 - **FILTER** per note: LP12, LP24, HP, BP, NOTCH, with CUTOFF and RES (both
   linkable, so the ENV can sweep every note), and a live response graph.
-- **Presets** in the menu bar: `<` `>` step through them, click the name for the
-  list (BASS, LEAD, SYNTH, PLUCK, PAD, FX, ARP, KEYS, BELLS).
+- **142 presets** in the menu bar, 10+ in each of BASS, LEAD, SYNTH, PLUCK, PAD,
+  KEYS, BELLS, ARP, FX, DRONE, PERC, BRASS and SCOPE ART (made to be watched).
+  `<` `>` step through them; click the name for the menu (categories on the
+  left, their presets on the right). Some bring their own typed shapes, which
+  replace the ones there were. The table they're made from is
+  `tools/make_presets.py`.
 - **Themes** (the gear, top right): GREEN, AMBER, CYAN, WHITE, PINK. The scope's
   phosphor changes to match. Your pick is remembered for every copy of the plugin.
 - **POLY / MONO** (16 notes), **LEGATO** (mono: overlapping notes don't restart

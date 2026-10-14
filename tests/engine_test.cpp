@@ -361,20 +361,38 @@ int main()
         const float a0 = pitchAt(l2, r, 1000, 3000, sr), a1 = pitchAt(l2, r, 6000 + 1000, 3000, sr);
         EXPECT(std::fabs(a0 / 220 - 1) < 0.02f && std::fabs(a1 / 277.18f - 1) < 0.02f, "arp, free at 8 steps/s: starts on step 1 (%.0f, then %.0f Hz)", a0, a1);
     }
-    // every factory preset: a note and a chord make sound, cleanly
-    for (const Preset& pr : presets()) {
-        pr.values(P);
-        gSet = ShapeSet();
-        Engine e(P); e.setSampleRate(sr);
-        e.noteOn(48, 110);
-        auto one = run(e, 24000);
-        e.noteOn(52, 110); e.noteOn(55, 110); e.noteOn(60, 110);
-        auto chord = run(e, 48000);
-        for (int n : {48, 52, 55, 60}) e.noteOff(n);
-        auto tail = run(e, 48000 * 10);  // the longest release is 4 s
-        const float rms1 = [&] { double s2 = 0; for (float v : one) s2 += v * v; return (float)std::sqrt(s2 / one.size()); }();
-        EXPECT(peak(one) > 0.02f && rms1 > 0.003f && peak(chord) <= 1.0f && e.activeVoices() == 0,
-               "%-5s %-15s note peak %.2f rms %.3f, chord peak %.2f, rings out", pr.category, pr.name, peak(one), rms1, peak(chord));
+    // every factory preset: its typed shapes compile, a note and a chord make sound,
+    // cleanly, it rings out, and no two presets are the same
+    {
+        std::vector<std::vector<float>> seen;
+        int quiet = 0, badShapes = 0, dupes = 0, stuck = 0, loud = 0;
+        for (const Preset& pr : presets()) {
+            pr.values(P);
+            pr.shapesInto(gSet);
+            for (const auto& c : gSet.customs) if (!c.x.ok() || !c.y.ok()) { ++badShapes; std::printf("  bad shape in %s\n", pr.name); }
+            std::vector<float> v(P, P + kParamCount);
+            for (const auto& xy : pr.shapes) v.push_back((float)std::hash<std::string>()(std::string(xy.first) + xy.second));
+            for (const auto& o : seen) if (o == v) { ++dupes; std::printf("  %s is the same as another\n", pr.name); }
+            seen.push_back(v);
+            Engine e(P); e.setSampleRate(sr);
+            e.noteOn(48, 110);
+            auto one = run(e, (int)(sr * std::clamp(P[kAttack] + 0.5f, 0.5f, 4.5f)));  // slow pads and risers get their attack
+            e.noteOn(52, 110); e.noteOn(55, 110); e.noteOn(60, 110);
+            auto chord = run(e, 48000);
+            for (int n : {48, 52, 55, 60}) e.noteOff(n);
+            for (int i = 0; i < 24 && e.activeVoices() > 0; ++i) run(e, 24000);  // up to 12 s to ring out
+            double s2 = 0; for (float x : one) s2 += x * x;
+            const float rms = (float)std::sqrt(s2 / one.size());
+            const bool ok = peak(one) > 0.02f && rms > 0.003f && peak(chord) <= 1.0f && e.activeVoices() == 0;
+            if (rms > 0.35f) ++loud;
+            if (!ok || rms > 0.35f)
+                std::printf("  %-9s %-16s note peak %.2f rms %.3f, chord peak %.2f, %d voices left\n", pr.category, pr.name, peak(one), rms, peak(chord), e.activeVoices());
+            quiet += peak(one) <= 0.02f || rms <= 0.003f;
+            stuck += e.activeVoices() != 0;
+        }
+        EXPECT(!quiet && !badShapes && !dupes && !stuck && !loud,
+               "%zu presets: all play and ring out (%d too quiet, %d too loud, %d with bad shapes, %d the same, %d stuck)",
+               presets().size(), quiet, loud, badShapes, dupes, stuck);
     }
     std::printf(fails ? "%d FAILED\n" : "ALL OK\n", fails);
     return fails != 0;

@@ -605,7 +605,12 @@ int main(int argc, char** argv)
     if (const char* tour = std::getenv("MINIHOST_TOUR")) {
         const char* dump = std::getenv("SCOPESYNTH_DUMP");
         auto theme = [&](int t) { click(child, X(1020 - 21), X(14)); click(child, X(900), X(28 + 4 + (t + 1) * 16 + 8)); };
-        auto preset = [&](int row) { click(child, X(300), X(14)); click(child, X(250), X(28 + 4 + row * 16 + 8)); };
+        // the preset menu: categories on the left (row 0 INIT, 1 BASS, 2 LEAD ...), their presets on the right
+        auto preset = [&](int cat, int i) {
+            click(child, X(300), X(14));
+            click(child, X(244), X(28 + 4 + cat * 16 + 8));
+            if (cat > 0) click(child, X(414), X(28 + 4 + i * 16 + 8));
+        };
         auto shot = [&](const char* name) {
             if (FILE* f = std::fopen((std::string(dump) + ".req").c_str(), "w")) {
                 std::fprintf(f, "%s-%s.ppm\n", tour, name);
@@ -615,15 +620,17 @@ int main(int argc, char** argv)
             std::printf("shot %s\n", name);
         };
         pump(1.0);
-        theme(0); preset(5);  // GREEN, LEAD / PHOSPHOR LEAD
+        theme(0); preset(2, 0);  // GREEN, LEAD / PHOSPHOR LEAD
         midi(57, 110); pump(2.5); shot("main"); midi(57, 0); pump(1.0);
-        theme(4); preset(14);  // PINK, PAD / AURORA PAD
+        theme(4); preset(5, 0);  // PINK, PAD / AURORA PAD
         midi(48, 100); midi(55, 100); midi(60, 100); midi(64, 100); pump(4.0); shot("pad");
         midi(48, 0); midi(55, 0); midi(60, 0); midi(64, 0); pump(3.0);
-        theme(2); preset(21);  // CYAN, ARP / ARP SPARKLE
+        theme(2); preset(8, 1);  // CYAN, ARP / ARP SPARKLE
         midi(57, 110); pump(2.2); shot("arp"); midi(57, 0); pump(1.0);
-        theme(1); click(child, X(300), X(14)); pump(0.5); shot("presets"); click(child, X(700), X(400));  // AMBER, the preset list open
-        theme(3); preset(0);  // WHITE, INIT
+        theme(1); preset(13, 0);  // AMBER, SCOPE ART / SPINNING CUBE
+        midi(57, 110); pump(2.5); shot("art"); midi(57, 0); pump(0.5);
+        click(child, X(300), X(14)); click(child, X(244), X(28 + 4 + 1 * 16 + 8)); pump(0.5); shot("presets"); click(child, X(900), X(600));  // the menu at BASS
+        theme(3); preset(0, 0);  // WHITE, INIT
         click(child, X(897), Y(122));  // NEW f(t) on OSC A
         for (const char* t = "sin(3t) + 0.4sin(7t + u)"; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); }
         PostMessageA(child, WM_KEYDOWN, VK_TAB, 0); PostMessageA(child, WM_KEYUP, VK_TAB, 0xC0000001); pump(0.05);
@@ -716,9 +723,10 @@ int main(int argc, char** argv)
     std::printf("DRAW ticked: %s; drawing set param %d -> %.3f\n", drawOn ? "yes" : "NO", gLastParam.load(), gLastValue.load());
     const bool drawn = drawOn && gLastParam >= base + 73 && gLastParam < base + 73 + 8 && std::fabs(gLastValue - (11.0 / 12 + 1) / 2) < 1e-4;
 
-    // ---- presets: open the menu, pick BASS / SUB SCOPE (row 3: INIT, # BASS, SUB SCOPE), play it
+    // ---- presets: open the menu, point at BASS (left), pick SUB SCOPE (right, first), play it
     click(child, X(300), X(14));
-    click(child, X(250), X(28 + 4 + 2 * 16 + 8));
+    click(child, X(244), X(28 + 4 + 1 * 16 + 8));
+    click(child, X(414), X(28 + 4 + 0 * 16 + 8));
     Stream ps;
     v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&ps);
     const std::string pblob(ps.data.begin(), ps.data.end());
@@ -728,6 +736,19 @@ int main(int argc, char** argv)
     midi(36, 0);
     pump(0.5);
     std::printf("preset SUB SCOPE: saved %s, plays peak %.3f\n", presetSaved ? "yes" : "NO", presetPk);
+    // a preset with its own typed shape: SCOPE ART / DNA (category 13, 4th)
+    click(child, X(300), X(14));
+    click(child, X(244), X(28 + 4 + 13 * 16 + 8));
+    click(child, X(414), X(28 + 4 + 3 * 16 + 8));
+    Stream ds;
+    v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&ds);
+    const std::string dblob(ds.data.begin(), ds.data.end());
+    const bool dnaShape = dblob.find("C sin(t) | 0.6sin(3t + u)") != std::string::npos && dblob.find("DNA") != std::string::npos;
+    midi(57, 110);
+    const float dnaPk = peakSince(1.0);
+    midi(57, 0);
+    pump(0.8);
+    std::printf("preset DNA: its shape saved %s, plays peak %.3f\n", dnaShape ? "yes" : "NO", dnaPk);
     std::printf("MONO notes with both oscillators: peak %.3f\n", monoPk);
 
     // ---- close the window, stop audio, unload (what FL does when you remove the plugin)
@@ -763,6 +784,7 @@ int main(int argc, char** argv)
     CHECK(typed, "a typed shape should be saved with the project");
     CHECK(drawn, "ticking DRAW and drawing in the LFO graph should set its steps");
     CHECK(cutoffDown, "dragging CUTOFF down should lower it");
+    CHECK(dnaShape && dnaPk > 0.05f, "a preset's typed shape should load with it and play");
     CHECK(presetSaved && presetPk > 0.05f, "picking a preset from the menu should load it and play");
     CHECK(slotAdded, "+ should add a slot through the A Shapes parameter");
     std::printf("ALL OK\n");

@@ -434,6 +434,7 @@ protected:
         fMouseX = x;
         fMouseY = y;
         if (fMenu) {
+            if (fMenu == kPresetMenu) hoverCategory(x, y + kTop);
             repaint();
             return true;
         }
@@ -531,24 +532,45 @@ private:
         repaint();
     }
 
-    // the preset menu's rows: INIT, then each category's name and its presets
-    struct Row { std::string text; int preset; };  // preset -1: a category name
-    std::vector<Row> presetRows() const
+    // the preset menu: INIT and the categories on the left, the pointed-at category's presets on the right
+    static constexpr float kCatW = 140;
+    std::string fMenuCat;
+    static std::vector<std::string> categories()
     {
-        std::vector<Row> rows;
-        std::string cat;
-        const auto& list = presets();
-        for (int i = 0; i < (int)list.size(); ++i) {
-            if (list[i].category != cat) {
-                cat = list[i].category;
-                rows.push_back({"# " + cat, -1});
-            }
-            rows.push_back({list[i].name, i});
-        }
-        return rows;
+        std::vector<std::string> cats;
+        for (const Preset& pr : presets())
+            if (*pr.category && (cats.empty() || cats.back() != pr.category)) cats.push_back(pr.category);
+        return cats;
     }
-    Box presetMenuBox() const { return {kPresetName.x, kTop, kPresetName.w, presetRows().size() * kMenuRow + 8}; }
+    static std::vector<int> presetsIn(const std::string& cat)
+    {
+        std::vector<int> list;
+        for (int i = 0; i < (int)presets().size(); ++i)
+            if (cat == presets()[i].category) list.push_back(i);
+        return list;
+    }
+    Box presetMenuBox() const
+    {
+        size_t rows = categories().size() + 1;
+        for (const std::string& c : categories()) rows = std::max(rows, presetsIn(c).size());
+        return {kPresetName.x, kTop, kCatW + 300, rows * kMenuRow + 8};
+    }
     Box themeMenuBox() const { return {kW - 160, kTop, 154, (kNumThemes + 1) * kMenuRow + 8}; }
+    // which row of the preset menu a point is on, and in which column (-1: none)
+    int menuRow(float x, float wy, bool& right) const
+    {
+        const Box b = presetMenuBox();
+        if (!b.has(x, wy)) return -1;
+        right = x >= b.x + kCatW;
+        return (int)((wy - b.y - 4) / kMenuRow);
+    }
+    void hoverCategory(float x, float wy)  // pointing at a category shows its presets
+    {
+        bool right;
+        const int r = menuRow(x, wy, right);
+        const auto cats = categories();
+        if (r >= 1 && r <= (int)cats.size() && !right) fMenuCat = cats[r - 1];
+    }
 
     int presetIndex() const
     {
@@ -562,6 +584,9 @@ private:
     {
         const auto& list = presets();
         i = (i + (int)list.size()) % (int)list.size();
+        fEdit = false;
+        list[i].shapesInto(fSet);  // its typed shapes first, so its slots find them
+        sendShapes();
         float v[kParamCount];
         list[i].values(v);
         for (int p = 0; p < kParamCount; ++p)
@@ -575,15 +600,25 @@ private:
     bool menuClick(int button, float x, float wy)
     {
         if (fMenu == kPresetMenu) {
-            const Box b = presetMenuBox();
-            fMenu = kNoMenu;
+            bool right;
+            const int r = menuRow(x, wy, right);
             repaint();
-            if (b.has(x, wy) && button == 1) {
-                const int r = (int)((wy - b.y - 4) / kMenuRow);
-                const auto rows = presetRows();
-                if (r >= 0 && r < (int)rows.size() && rows[r].preset >= 0) loadPreset(rows[r].preset);
+            if (r < 0 || button != 1) {  // a click outside closes it
+                fMenu = kNoMenu;
+                return true;
             }
-            return true;  // a click anywhere closes it
+            const auto cats = categories();
+            const auto list = presetsIn(fMenuCat);
+            if (!right && r == 0) {
+                loadPreset(0);  // INIT
+                fMenu = kNoMenu;
+            } else if (!right && r <= (int)cats.size()) {
+                fMenuCat = cats[r - 1];
+            } else if (right && r < (int)list.size()) {
+                loadPreset(list[r]);
+                fMenu = kNoMenu;
+            }
+            return true;
         }
         if (fMenu == kThemeMenu) {
             const Box b = themeMenuBox();
@@ -598,7 +633,11 @@ private:
         }
         if (wy >= kTop || button != 1) return wy < kTop;
         if (kPresetPrev.has(x, wy) || kPresetNext.has(x, wy)) loadPreset(std::max(presetIndex(), 0) + (kPresetNext.has(x, wy) ? 1 : -1));
-        else if (kPresetName.has(x, wy)) fMenu = kPresetMenu;
+        else if (kPresetName.has(x, wy)) {
+            fMenu = kPresetMenu;
+            const int cur = presetIndex();
+            fMenuCat = cur > 0 ? presets()[cur].category : categories().front();
+        }
         else if (kGear.has(x, wy)) fMenu = kThemeMenu;
         repaint();
         return true;
@@ -646,19 +685,24 @@ private:
             const Box b = presetMenuBox();
             fillBox(b, kBg);
             outline(b, kFg);
-            const auto rows = presetRows();
+            fillBox({b.x + kCatW, b.y + 4, 1, b.h - 8}, kDim);
             const int cur = presetIndex();
-            for (size_t r = 0; r < rows.size(); ++r) {
-                const Box rb = {b.x + 2, b.y + 4 + r * kMenuRow, b.w - 4, kMenuRow};
-                if (rows[r].preset < 0) {
-                    label(rb.x + 8, rb.y + rb.h / 2, rows[r].text.c_str(), kDim, 10);
-                    continue;
-                }
+            auto row = [&](float x, float w, int r, const char* text, bool lit, bool marked) {
+                const Box rb = {x, b.y + 4 + r * kMenuRow, w, kMenuRow};
                 const bool hot = rb.has(fMouseX, my);
-                if (hot) fillBox(rb, kFg);
-                label(rb.x + 22, rb.y + rb.h / 2, rows[r].text.c_str(), hot ? kBg : rows[r].preset == cur ? kBright : kFg, 11);
-                if (rows[r].preset == cur) label(rb.x + 10, rb.y + rb.h / 2, ">", hot ? kBg : kBright, 11);
+                if (hot || lit) fillBox(rb, hot ? kFg : kFaint);
+                label(rb.x + 20, rb.y + rb.h / 2, text, hot ? kBg : marked ? kBright : kFg, 11);
+                if (marked) label(rb.x + 8, rb.y + rb.h / 2, ">", hot ? kBg : kBright, 11);
+            };
+            row(b.x + 2, kCatW - 4, 0, "INIT", false, cur == 0);
+            const auto cats = categories();
+            for (size_t c = 0; c < cats.size(); ++c) {
+                const bool here = cur > 0 && cats[c] == presets()[cur].category;
+                row(b.x + 2, kCatW - 4, (int)c + 1, cats[c].c_str(), cats[c] == fMenuCat, here);
             }
+            const auto list = presetsIn(fMenuCat);
+            for (size_t i = 0; i < list.size(); ++i)
+                row(b.x + kCatW + 2, b.w - kCatW - 4, (int)i, presets()[list[i]].name, false, list[i] == cur);
         } else if (fMenu == kThemeMenu) {
             const Box b = themeMenuBox();
             fillBox(b, kBg);
