@@ -22,9 +22,10 @@ fast the beam goes round. The tube shows exactly what you hear.
   it into 1-16 steps you draw in its graph, snapped to 1/12: link it to SEMI at
   +50% and each step is a semitone, which is how the ARP presets work. A fresh
   key press starts the pattern from step 1 (unless it's following the song).
-- **Linking, like Serum:** drag the ENV or LFO handle onto a control. It gets a
-  coloured range line and a tag; drag the tag up/down to set how much
-  (negative works too), right-click it to unlink.
+- **Linking, like Serum:** drag the ENV or LFO handle onto a control. A cable
+  runs from the handle along the gaps between the panels into the control,
+  which shows how far the link can move it. Drag the link's tag up/down to set
+  how much (negative works too), right-click it to unlink.
 - **FILTER** per note: LP12, LP24, HP, BP, NOTCH, with CUTOFF and RES (both
   linkable, so the ENV can sweep every note), and a live response graph.
 - **Presets** in the menu bar: `<` `>` step through them, click the name for the

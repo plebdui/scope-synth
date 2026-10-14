@@ -299,20 +299,19 @@ protected:
         drawLfoPanel();
         drawStrip();
         drawKeyboard();
+        drawWires();
         for (const Ctl& c : fCtls)
             drawCtl(c);
-        if (fLinkSrc >= 0) {  // dragging a link: a line from the handle to the pointer
+        if (fLinkSrc >= 0) {  // dragging a link: a loose cable from the handle, sagging under its weight
             const Box& h = kHandle[fLinkSrc];
+            const float x0 = h.x + h.w / 2, y0 = h.y + h.h / 2;
+            const float sag = 40 + 0.25f * std::fabs(fMouseX - x0);
             beginPath();
-            moveTo(h.x + h.w / 2, h.y + h.h / 2);
-            lineTo(fMouseX, fMouseY);
-            strokeColor(kSrcCol[fLinkSrc]);
-            strokeWidth(1.5f);
-            stroke();
-            beginPath();
-            rect(fMouseX - 3, fMouseY - 3, 6, 6);
-            fillColor(kSrcCol[fLinkSrc]);
-            fill();
+            moveTo(x0, y0);
+            bezierTo(x0, y0 + sag, fMouseX, fMouseY + sag, fMouseX, fMouseY);
+            cable(kSrcCol[fLinkSrc]);
+            jack(x0, y0, kSrcCol[fLinkSrc]);
+            jack(fMouseX, fMouseY, kSrcCol[fLinkSrc]);
         }
         restore();
         save();
@@ -1174,6 +1173,79 @@ private:
             fillBox({g.x + 2, mid - amp * fLfo, g.w - 4, 1}, Color(lc.red, lc.green, lc.blue, 0.45f));
         }
         drawHandle(kSrcLfo);
+    }
+
+    // ---- the links, drawn as cables: out of the ENV / LFO handle, along the gaps
+    // between the panels (and down the channel left of them), into the control
+    // from above. Cables sharing a gap sit side by side.
+
+    // the gap above each row of panels (content units)
+    static float gapAbove(float y)
+    {
+        // just under the bottom line of the panel above, clear of the titles in the next one's top line
+        if (y < kOscY[1]) return 0;
+        if (y < kEnvY) return kOscY[1] - 2;
+        if (y < kLfoY) return kEnvY - 2;
+        if (y < kStripY) return kLfoY - 2;
+        return kStripY - 1;
+    }
+
+    // a cable: a dark sheath, then the coloured wire
+    void cable(const Color& c)
+    {
+        lineCap(ROUND);
+        lineJoin(ROUND);
+        strokeColor(Color(0, 0, 0, 0.7f));
+        strokeWidth(4.5f);
+        stroke();
+        strokeColor(Color(c.red, c.green, c.blue, 0.9f));
+        strokeWidth(2);
+        stroke();
+        lineCap(BUTT);
+    }
+    void jack(float x, float y, const Color& c)
+    {
+        beginPath();
+        circle(x, y, 3.5f);
+        fillColor(kBg);
+        fill();
+        strokeColor(c);
+        strokeWidth(1.5f);
+        stroke();
+    }
+
+    void drawWires()
+    {
+        int n = 0;  // which cable this is, to spread them out in the gaps they share
+        for (const Ctl& c : fCtls) {
+            const int d = destIndex(c.param);
+            if (d < 0) continue;
+            for (int src = 0; src < kNumSources; ++src) {
+                if (fValues[modParam(src, d)] == 0) continue;
+                const Box& h = kHandle[src];
+                const float off = (float)((n++ % 3) - 1) * 2.5f;
+                const float hx = h.x + h.w / 2 + off, tx = c.x + c.w / 2 + off, ty = c.y + 3;
+                const float into = gapAbove(c.y) + off;  // the gap the cable arrives along
+                const bool up = into < h.y;
+                const float out = (up ? gapAbove(h.y) : gapAbove(h.y + h.h)) + off;  // and the one it leaves by
+                std::vector<std::pair<float, float>> pts = {{hx, up ? h.y : h.y + h.h}, {hx, out}};
+                if (std::fabs(out - into) > 4) {  // another row: down the channel left of the panels
+                    const float lane = kR + 1.5f + off * 0.4f;
+                    pts.push_back({lane, out});
+                    pts.push_back({lane, into});
+                }
+                pts.push_back({tx, into});
+                pts.push_back({tx, ty});
+                beginPath();
+                moveTo(pts[0].first, pts[0].second);
+                for (size_t i = 1; i + 1 < pts.size(); ++i)  // rounded corners
+                    arcTo(pts[i].first, pts[i].second, pts[i + 1].first, pts[i + 1].second, 6);
+                lineTo(pts.back().first, pts.back().second);
+                cable(kSrcCol[src]);
+                jack(pts.front().first, pts.front().second, kSrcCol[src]);
+                jack(tx, ty, kSrcCol[src]);
+            }
+        }
     }
 
     // the thing you drag onto a control to link it
