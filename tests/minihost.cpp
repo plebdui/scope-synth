@@ -498,7 +498,7 @@ int main(int argc, char** argv)
     static Handler handler;
     v3_cpp_obj(ctrl)->set_component_handler(ctrl, (v3_component_handler**)&handler);
     const int nParams = v3_cpp_obj(ctrl)->get_parameter_count(ctrl);
-    const int base = nParams - 100;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
+    const int base = nParams - 102;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
     std::printf("parameters: %d (synth's own from %d)\n", nParams, base);
 
     v3_audio_processor** proc = nullptr;
@@ -712,8 +712,16 @@ int main(int argc, char** argv)
         for (char& ch : shown) if (ch == 0) ch = '~';
         std::printf("state: %s\n", shown.c_str());
     }
+    // ---- SUB's shape selector: click = next (CIRCLE -> ROSE); NOISE's: right-click = back (WHITE -> CRACKLE)
+    click(child, X(298), Y(536));
+    const bool subSel = gLastParam == base + 96 && std::fabs(gLastValue - 1.0 / 27) < 1e-4;
+    PostMessageA(child, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(X(380), Y(536)));
+    PostMessageA(child, WM_RBUTTONUP, 0, MAKELPARAM(X(380), Y(536)));
+    pump(0.3);
+    const bool noiseSel = gLastParam == base + 97 && gLastValue == 1;
+    std::printf("SUB shape click: %s, NOISE type right-click: %s\n", subSel ? "next" : "WRONG", noiseSel ? "back to CRACKLE" : "WRONG");
     // ---- turn the filter's CUTOFF knob down
-    drag(child, X(568), Y(538), X(568), Y(538 + 60));
+    drag(child, X(608), Y(538), X(608), Y(538 + 60));
     std::printf("CUTOFF dragged down: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
     const bool cutoffDown = gLastParam == base + 67 && gLastValue < 0.8;
     midi(48, 110); pump(0.3); midi(55, 110);
@@ -850,6 +858,7 @@ int main(int argc, char** argv)
     CHECK(monoPk > 0.05f, "MONO notes make sound");
     CHECK(typed, "a typed shape should be saved with the project");
     CHECK(drawn, "ticking DRAW and drawing in the LFO graph should set its steps");
+    CHECK(subSel && noiseSel, "the SUB shape and NOISE type selectors should step through their choices");
     CHECK(cutoffDown, "dragging CUTOFF down should lower it");
     CHECK(ownPresets, "saving, loading, exporting, deleting and importing your own presets should all work");
     CHECK(dnaShape && dnaPk > 0.05f, "a preset's typed shape should load with it and play");

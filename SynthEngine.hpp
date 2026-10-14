@@ -230,6 +230,7 @@ private:
         double subPh = 0;                    // SUB: a circle one or two octaves down
         float subLv = 0, noiseLv = 0;        // their last levels, ramped from
         uint32_t noise = 22222;              // NOISE: each note its own
+        float pink[2][3] = {}, brown[2] = {};  // NOISE's colour filters, per channel
     };
 
     const float* P;
@@ -298,6 +299,8 @@ private:
         v.sn[0] = v.sn[1] = 0;
         v.subPh = 0;
         v.subLv = v.noiseLv = 0;
+        std::memset(v.pink, 0, sizeof(v.pink));
+        v.brown[0] = v.brown[1] = 0;
         std::memset(v.f1, 0, sizeof(v.f1));
         std::memset(v.f2, 0, sizeof(v.f2));
     }
@@ -436,6 +439,12 @@ private:
             const float noiseLv = std::max(modulated(kNoiseLevel, env, lfoVal), 0.0f) * vol * 0.5f;
             const float subInc = std::min(440.0f * std::exp2((v.pitch + bend - 69) / 12 + std::lround(P[kSubOct])) / sr, 0.45f);
             if (v.noise == 22222) v.noise = (uint32_t)(v.order * 2654435761u) | 1;
+            // SUB's shape: 0 a plain circle, else one of the shapes (traced like an oscillator, no morph)
+            const int subShape = std::clamp((int)std::lround(P[kSubShape]), 0, shapes->count());
+            const float* subX = nullptr;
+            const float* subY = nullptr;
+            if (subShape > 0) table(subShape - 1, tick, subX, subY);
+            const int noiseType = std::clamp((int)std::lround(P[kNoiseType]), 0, 3);
 
             // the filter for this note: cutoff and resonance as the links set them now
             const int ftype = std::clamp((int)std::lround(P[kFilterType]), 0, 4);
@@ -482,16 +491,37 @@ private:
                 const float sl = v.subLv + (subLv - v.subLv) * k, nl = v.noiseLv + (noiseLv - v.noiseLv) * k;
                 v.subPh += subInc;
                 if (v.subPh >= 1) v.subPh -= 1;
-                if (sl > 0) {
+                if (sl > 0 && !subX) {
                     const float a = (float)(6.283185307179586 * v.subPh);
                     sx += std::sin(a) * sl;
                     sy += std::cos(a) * sl;
+                } else if (sl > 0) {
+                    const float p = (float)(v.subPh * ShapeTables::kT);
+                    const int i0 = std::min((int)p, ShapeTables::kT - 1), i1 = (i0 + 1) & (ShapeTables::kT - 1);
+                    const float f = p - i0;
+                    sx += (subX[i0] + (subX[i1] - subX[i0]) * f) * sl * 1.25f;  // the shapes reach 0.8; the circle 1
+                    sy += (subY[i0] + (subY[i1] - subY[i0]) * f) * sl * 1.25f;
                 }
                 if (nl > 0) {
-                    v.noise = v.noise * 1664525u + 1013904223u;
-                    sx += ((v.noise >> 9) / 4194304.0f - 1) * nl;
-                    v.noise = v.noise * 1664525u + 1013904223u;
-                    sy += ((v.noise >> 9) / 4194304.0f - 1) * nl;
+                    float* out[2] = {&sx, &sy};
+                    for (int ch = 0; ch < 2; ++ch) {
+                        v.noise = v.noise * 1664525u + 1013904223u;
+                        const float w = (v.noise >> 9) / 4194304.0f - 1;  // white, -1..1
+                        float n = w;
+                        if (noiseType == 1) {  // pink: -3 dB an octave (Paul Kellet's economy filter)
+                            float* b = v.pink[ch];
+                            b[0] = 0.99765f * b[0] + w * 0.0990460f;
+                            b[1] = 0.96300f * b[1] + w * 0.2965164f;
+                            b[2] = 0.57000f * b[2] + w * 1.0526913f;
+                            n = (b[0] + b[1] + b[2] + w * 0.1848f) * 0.25f;
+                        } else if (noiseType == 2) {  // brown: -6 dB an octave, a slow wander
+                            v.brown[ch] = (v.brown[ch] + 0.02f * w) / 1.02f;
+                            n = v.brown[ch] * 3.5f;
+                        } else if (noiseType == 3) {  // crackle: now and then a click, like dust on a record
+                            n = ((v.noise >> 16) & 0x3FF) < 2 ? (w > 0 ? 1.0f : -1.0f) : 0.0f;  // about 90 a second
+                        }
+                        *out[ch] += n * nl;
+                    }
                 }
                 {
                     float* in[2] = {&sx, &sy};

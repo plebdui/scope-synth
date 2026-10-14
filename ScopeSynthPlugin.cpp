@@ -78,6 +78,23 @@ void ScopeSynthPlugin::initParameter(uint32_t index, Parameter& p)
         p.enumValues.count = 12; p.enumValues.restrictedMode = true; p.enumValues.values = v;
         p.enumValues.deleteLater = false;
     }
+    if (index == kNoiseType) {
+        static ParameterEnumerationValue v[4];
+        for (int i = 0; i < 4; ++i) { v[i].value = (float)i; v[i].label = kNoiseTypes[i]; }
+        p.enumValues.count = 4; p.enumValues.restrictedMode = true; p.enumValues.values = v;
+        p.enumValues.deleteLater = false;
+    }
+    if (index == kSubShape) {  // CIRCLE, then the shapes by name
+        static ParameterEnumerationValue v[kMaxShapes + 1];
+        static std::string names[kMaxShapes + 1];
+        for (int i = 0; i <= kMaxShapes; ++i) {
+            names[i] = i == 0 ? "CIRCLE" : i <= kBuiltinShapes ? crt::kEquationInfo[i - 1].name : "MY SHAPE " + std::to_string(i - kBuiltinShapes);
+            v[i].value = (float)i;
+            v[i].label = names[i].c_str();
+        }
+        p.enumValues.count = kMaxShapes + 1; p.enumValues.restrictedMode = true; p.enumValues.values = v;
+        p.enumValues.deleteLater = false;
+    }
     if (index == kFilterType) {
         static ParameterEnumerationValue v[5];
         for (int i = 0; i < 5; ++i) { v[i].value = (float)i; v[i].label = kFilterTypes[i]; }

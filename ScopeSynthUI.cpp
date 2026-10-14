@@ -132,8 +132,10 @@ struct Box {
     bool has(float px, float py) const { return px >= x && px < x + w && py >= y && py < y + h; }
 };
 
-static constexpr float kFilterX = 362;     // the FILTER panel, in the bottom strip
-static const Box kFilterGraph = {kFilterX + 310, kStripY + 16, 180, 66};
+static constexpr float kFilterX = 402;     // the FILTER panel, in the bottom strip
+static const Box kFilterGraph = {kFilterX + 310, kStripY + 16, 140, 66};
+// SUB's shape and NOISE's type: little selectors right of their knobs
+static const Box kSubSel = {282, kStripY + 27, 32, 18}, kNoiseSel = {364, kStripY + 27, 32, 18};
 // the LFO: its graph (DRAW: you draw the steps in it), and SYNC / DRAW / STEPS in its title line
 static const Box kLfoGraph = {kR + 162, kLfoY + 22, 254, 78};
 static const Box kSyncBox = {kR + 78, kLfoY, 64, 13}, kDrawBox = {kR + 146, kLfoY, 64, 13}, kStepsBox = {kR + 214, kLfoY, 100, 13};
@@ -189,12 +191,12 @@ public:
             fCtls.push_back({kAttack + i, kR + 12 + i * 60.0f, kEnvY + 16, 60, 92});
         fCtls.push_back({kLfoRate, kR + 12, kLfoY + 16, 60, 92});
         fCtls.push_back({kLfoWave, kR + 74, kLfoY + 16, 84, 92});
-        fCtls.push_back({kPoly, 6, kStripY, 62, kStripH});
-        fCtls.push_back({kLegato, 68, kStripY, 60, kStripH});
-        fCtls.push_back({kGlide, 128, kStripY, 58, kStripH});
-        fCtls.push_back({kVolume, 186, kStripY, 56, kStripH});
-        fCtls.push_back({kSubLevel, 242, kStripY, 58, kStripH});   // click its caption: one or two octaves down
-        fCtls.push_back({kNoiseLevel, 300, kStripY, 58, kStripH});
+        fCtls.push_back({kPoly, 6, kStripY, 60, kStripH});
+        fCtls.push_back({kLegato, 66, kStripY, 58, kStripH});
+        fCtls.push_back({kGlide, 124, kStripY, 56, kStripH});
+        fCtls.push_back({kVolume, 180, kStripY, 54, kStripH});
+        fCtls.push_back({kSubLevel, kSubSel.x - 48, kStripY, 48, kStripH});   // click its caption: one or two octaves down
+        fCtls.push_back({kNoiseLevel, kNoiseSel.x - 48, kStripY, 48, kStripH});
         fCtls.push_back({kFilterType, kFilterX + 88, kStripY + 4, 84, kStripH - 4});
         fCtls.push_back({kCutoff, kFilterX + 174, kStripY + 4, 64, kStripH - 4});
         fCtls.push_back({kRes, kFilterX + 240, kStripY + 4, 64, kStripH - 4});
@@ -458,7 +460,8 @@ protected:
             repaint();
             return true;
         }
-        if (ev.button == kMouseButtonLeft && Box{242, kStripY, 58, 18}.has(x, y)) {  // SUB's caption: -1 / -2 octaves
+        if (selectorClick(ev.button, x, y, 0)) return true;
+        if (ev.button == kMouseButtonLeft && Box{kSubSel.x - 48, kStripY, 48, 18}.has(x, y)) {  // SUB's caption: -1 / -2 octaves
             setValue(kSubOct, fValues[kSubOct] > -1.5f ? -2.0f : -1.0f, true);
             return true;
         }
@@ -562,6 +565,8 @@ protected:
     bool onScroll(const ScrollEvent& ev) override
     {
         const float s = (float)getScaleFactor();
+        if (ev.delta.getY() != 0 && selectorClick(0, (float)ev.pos.getX() / s, (float)ev.pos.getY() / s - kTop, ev.delta.getY() > 0 ? 1 : -1))
+            return true;
         const Ctl* c = ctlAt((float)ev.pos.getX() / s, (float)ev.pos.getY() / s - kTop);
         if (!c || ev.delta.getY() == 0) return false;
         const int p = c->param;
@@ -1125,6 +1130,39 @@ private:
                 label(rb.x + 40, rb.y + rb.h / 2, kThemes[t].name, hot ? kBg : t == fTheme ? kBright : kFg, 11);
                 if (t == fTheme) label(rb.x + 8, rb.y + rb.h / 2, ">", hot ? kBg : kBright, 11);
             }
+        }
+    }
+
+    // ---- SUB's shape and NOISE's type: click for the next, right-click (or scroll down) for the one before
+    bool selectorClick(int button, float x, float y, int scroll)
+    {
+        const bool sub = kSubSel.has(x, y);
+        if (!sub && !kNoiseSel.has(x, y)) return false;
+        const int dir = scroll ? scroll : button == kMouseButtonRight ? -1 : button == kMouseButtonLeft ? 1 : 0;
+        if (!dir) return true;
+        const int p = sub ? kSubShape : kNoiseType, n = sub ? fSet.count() + 1 : 4;  // SUB: CIRCLE and every shape
+        setValue(p, (float)((((int)std::lround(fValues[p]) + dir) % n + n) % n), true);
+        return true;
+    }
+    std::string subShapeName() const
+    {
+        const int i = (int)std::lround(fValues[kSubShape]);
+        if (i <= 0 || i > fSet.count()) return "CIRC";
+        if (i <= kBuiltinShapes) return kShortShapes[i - 1];
+        return "MY" + std::to_string(i - kBuiltinShapes);
+    }
+    void drawSelectors()
+    {
+        static const char* const noise[4] = {"WHITE", "PINK", "BROWN", "CRKL"};
+        const std::string sub = subShapeName();
+        const char* texts[2] = {sub.c_str(), noise[std::clamp((int)std::lround(fValues[kNoiseType]), 0, 3)]};
+        const Box* boxes[2] = {&kSubSel, &kNoiseSel};
+        for (int i = 0; i < 2; ++i) {
+            const Box& b = *boxes[i];
+            fillBox(b, kBg);
+            outline(b, kDim);
+            label(b.x + b.w / 2, b.y + b.h / 2 + 0.5f, texts[i], kBright, 8.5f, ALIGN_CENTER | ALIGN_MIDDLE);
+            label(b.x + b.w / 2, b.y + b.h + 8, i == 0 ? "SHAPE" : "TYPE", kFaint, 7.5f, ALIGN_CENTER | ALIGN_MIDDLE);
         }
     }
 
@@ -1729,6 +1767,7 @@ private:
     {
         outline({4, kStripY + 2, kW - 8, kStripH - 6}, kFaint);
         drawFilter();
+        drawSelectors();
         // keyboard octave
         button(kOctDown, "<", kFg);
         button(kOctUp, ">", kFg);
@@ -1742,7 +1781,7 @@ private:
     // the FILTER panel: how loud each frequency comes out, as its controls (and links) set it now
     void drawFilter()
     {
-        panel({kFilterX, kStripY, 498, kStripH - 2}, "FILTER");
+        panel({kFilterX, kStripY, 458, kStripH - 2}, "FILTER");
         const Box& g = kFilterGraph;
         outline(g, kFaint);
         const int type = std::clamp((int)std::lround(fValues[kFilterType]), 0, 4);

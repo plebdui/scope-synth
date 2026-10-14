@@ -37,8 +37,9 @@ fast the beam goes round. The tube shows exactly what you hear.
   runs from the handle along the gaps between the panels into the control,
   which shows how far the link can move it. Drag the link's tag up/down to set
   how much (negative works too), right-click it to unlink.
-- **SUB** (a circle one or two octaves down: click its label to switch) and
-  **NOISE**, each one knob in the bottom strip, both linkable.
+- **SUB**, one or two octaves down (click its label to switch): a plain circle,
+  or any shape from the list (the selector next to its knob). **NOISE**: WHITE,
+  PINK, BROWN or CRACKLE (its selector). Both levels are linkable.
 - **FILTER** per note: LP12, LP24, HP, BP, NOTCH, with CUTOFF and RES (both
   linkable, so the ENV can sweep every note), and a live response graph.
 - **142 presets** in the menu bar, 10+ in each of BASS, LEAD, SYNTH, PLUCK, PAD,

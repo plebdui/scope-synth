@@ -25,6 +25,7 @@ enum Param {
     kLfoSync, kLfoDiv, kLfoDraw, kLfoSteps, kLfoStep0,   // LFO: tempo sync, and DRAW mode's steps
     kModBase2 = kLfoStep0 + 16,                          // ENV, LFO -> cutoff and resonance, a pair each
     kSubLevel = kModBase2 + 4, kSubOct, kNoiseLevel,     // added in 1.2: SUB and NOISE
+    kSubShape, kNoiseType,                               // SUB: CIRCLE or any shape; NOISE: white, pink, brown, crackle
     kModBase3,                                           // ENV, LFO -> sub and noise level, a pair each
 };
 
@@ -150,9 +151,14 @@ static const ParamInfo kInfo[kModBase3] = {
     {"Sub Level", "sub_level", "SUB", "%", 0, 1, 0, kLin, kKnob},
     {"Sub Octave", "sub_oct", "SUB OCT", "", -2, -1, -1, kLin, kInt},
     {"Noise Level", "noise_level", "NOISE", "%", 0, 1, 0, kLin, kKnob},
+    {"Sub Shape", "sub_shape", "SUB SHAPE", "", 0, kMaxShapes, 0, kLin, kChoice},
+    {"Noise Type", "noise_type", "NOISE TYPE", "", 0, 3, 0, kLin, kChoice},
 };
 
 static const char* const kLfoWaves[5] = {"SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"};
+static const char* const kNoiseTypes[4] = {"WHITE", "PINK", "BROWN", "CRACKLE"};
+// the shapes, short, for small displays (SUB's shape: 0 is CIRCLE, then these)
+static const char* const kShortShapes[kBuiltinShapes] = {"ROSE", "HEART", "BFLY", "SPIRO", "KNOT", "INF", "SPIN", "MROSE", "BSPIR", "BEAT", "CUBE"};
 static const char* const kFilterTypes[5] = {"LP12", "LP24", "HP", "BP", "NOTCH"};
 // LFO SYNC: note lengths, and how many beats each is
 static const char* const kDivNames[12] = {"1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T", "1/4.", "1/8.", "1/16."};

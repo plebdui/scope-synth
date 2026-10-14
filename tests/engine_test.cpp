@@ -417,6 +417,30 @@ int main()
         P[kNoiseLevel] = 0.8f;
         auto noisy = play(r);
         EXPECT(power(noisy, 1234.5f) > 8 * power(plain, 1234.5f) && peak(noisy) <= 1.0f, "NOISE fills in between the harmonics (%.3g vs %.3g)", power(noisy, 1234.5f), power(plain, 1234.5f));
+        // the noise types: pink and brown lean low, crackle is sparse clicks
+        auto lowHigh = [&](int type, float& lowE, float& highE, float& crest) {
+            defaults();
+            P[kALevel] = 0; P[kNoiseLevel] = 0.8f; P[kNoiseType] = (float)type;
+            std::vector<float> rr;
+            auto n = play(rr);
+            lowE = (float)(power(n, 150) + power(n, 210.5f));
+            highE = (float)(power(n, 6000) + power(n, 8100.5f));
+            double s2 = 0; for (int i = 4800; i < 24000; ++i) s2 += n[i] * n[i];
+            crest = peak(n, 4800) / (float)std::sqrt(s2 / 19200);
+        };
+        float wl, wh, wc, pl, ph, pc, bl, bh, bc, cl, ch, cc;
+        lowHigh(0, wl, wh, wc); lowHigh(1, pl, ph, pc); lowHigh(2, bl, bh, bc); lowHigh(3, cl, ch, cc);
+        EXPECT(pl / ph > 5 * wl / wh && bl / bh > 5 * pl / ph && cc > 3 * wc,
+               "NOISE types: pink and brown lean low (low/high %.2f, %.1f, %.0f), crackle clicks (crest %.1f vs %.1f)", wl / wh, pl / ph, bl / bh, cc, wc);
+        // SUB's shape: a HEART an octave down instead of the circle, still an octave down
+        defaults();
+        P[kALevel] = 0; P[kSubLevel] = 0.8f;
+        auto circle = play(r);
+        P[kSubShape] = 2;  // 0 CIRCLE, 1 ROSE, 2 HEART
+        auto heart = play(r);
+        for (size_t i = 0; i < heart.size(); ++i) r[i] += heart[i];
+        EXPECT(std::fabs(pitchOf(r, sr) / 110 - 1) < 0.02f && power(heart, 330) > 10 * power(circle, 330),
+               "SUB shape HEART: still at 110 Hz under A3 (%.1f), with the heart's harmonics", pitchOf(r, sr));
     }
     {
         // preset files: every factory preset to text and back, unchanged
