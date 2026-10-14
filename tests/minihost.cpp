@@ -600,6 +600,48 @@ int main(int argc, char** argv)
     auto Y = [&](double y) { return X(y + 28); };  // under the 28-high menu bar
     std::printf("window open (scale %.2f)\n", sc);
 
+    // ---- MINIHOST_TOUR=C:\path\shot: no tests, a tour for the README's screenshots
+    // (needs SCOPESYNTH_DUMP set too; each snapshot is asked for through <dump>.req)
+    if (const char* tour = std::getenv("MINIHOST_TOUR")) {
+        const char* dump = std::getenv("SCOPESYNTH_DUMP");
+        auto theme = [&](int t) { click(child, X(1020 - 21), X(14)); click(child, X(900), X(28 + 4 + (t + 1) * 16 + 8)); };
+        auto preset = [&](int row) { click(child, X(300), X(14)); click(child, X(250), X(28 + 4 + row * 16 + 8)); };
+        auto shot = [&](const char* name) {
+            if (FILE* f = std::fopen((std::string(dump) + ".req").c_str(), "w")) {
+                std::fprintf(f, "%s-%s.ppm\n", tour, name);
+                std::fclose(f);
+            }
+            pump(1.0);
+            std::printf("shot %s\n", name);
+        };
+        pump(1.0);
+        theme(0); preset(5);  // GREEN, LEAD / PHOSPHOR LEAD
+        midi(57, 110); pump(2.5); shot("main"); midi(57, 0); pump(1.0);
+        theme(4); preset(14);  // PINK, PAD / AURORA PAD
+        midi(48, 100); midi(55, 100); midi(60, 100); midi(64, 100); pump(4.0); shot("pad");
+        midi(48, 0); midi(55, 0); midi(60, 0); midi(64, 0); pump(3.0);
+        theme(2); preset(21);  // CYAN, ARP / ARP SPARKLE
+        midi(57, 110); pump(2.2); shot("arp"); midi(57, 0); pump(1.0);
+        theme(1); click(child, X(300), X(14)); pump(0.5); shot("presets"); click(child, X(700), X(400));  // AMBER, the preset list open
+        theme(3); preset(0);  // WHITE, INIT
+        click(child, X(897), Y(122));  // NEW f(t) on OSC A
+        for (const char* t = "sin(3t) + 0.4sin(7t + u)"; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); }
+        PostMessageA(child, WM_KEYDOWN, VK_TAB, 0); PostMessageA(child, WM_KEYUP, VK_TAB, 0xC0000001); pump(0.05);
+        for (const char* t = "cos(2t) - 0.3cos(5t)"; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); }
+        pump(1.0); shot("editor");
+        PostMessageA(child, WM_KEYDOWN, VK_ESCAPE, 0); PostMessageA(child, WM_KEYUP, VK_ESCAPE, 0xC0000001); pump(0.3);
+        theme(0);
+        v3_cpp_obj(view)->removed(view);
+        v3_cpp_obj_unref(view);
+        DestroyWindow(win);
+        running = false;
+        audio.join();
+        v3_cpp_obj(proc)->set_processing(proc, false);
+        v3_cpp_obj(comp)->set_active(comp, false);
+        std::printf("tour done\n");
+        return 0;
+    }
+
     // ---- the theme menu: the gear, then AMBER (row 2 under its title)
     click(child, X(1020 - 21), X(14));
     click(child, X(900), X(28 + 4 + 2 * 16 + 8));

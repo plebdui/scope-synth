@@ -260,6 +260,13 @@ protected:
         const float dt = std::chrono::duration<float>(now - fLast).count();
         fLast = now;
         fBlink += std::clamp(dt, 0.0f, 0.25f);
+        if (!fDumpPath.empty()) {  // testing: <dump>.req asks for a snapshot, named inside it
+            std::ifstream req(fDumpPath + ".req");
+            if (req && std::getline(req, fDumpNext)) {
+                req.close();
+                std::remove((fDumpPath + ".req").c_str());
+            }
+        }
         fTube.step(dt);
         repaint();
     }
@@ -320,6 +327,12 @@ protected:
         drawMenus();  // open menus go over everything
         restore();
 
+        if (!fDumpNext.empty()) {  // testing: a snapshot asked for
+            static_cast<NanoVG*>(this)->endFrame();
+            dumpFrontBuffer(fDumpNext);
+            static_cast<NanoVG*>(this)->beginFrame(getWidth(), getHeight());
+            fDumpNext.clear();
+        }
         // testing hook: snapshot the window 3s, 7s, 13s and 19.5s after opening
         if (!fDumpPath.empty() && fDumps < 4) {
             static const float when[4] = {3.0f, 7.0f, 13.0f, 19.5f};
@@ -480,7 +493,7 @@ private:
     std::chrono::steady_clock::time_point fLast, fOpened = std::chrono::steady_clock::now();
     NanoImage fImage;
     uint fImageW = 0;
-    std::string fDumpPath;
+    std::string fDumpPath, fDumpNext;
     int fDumps = 0;
     float fBlink = 0;
     // live from the plugin

@@ -5,6 +5,13 @@ spirograph, spinning cube...) the way oscilloscope music works: left = x,
 right = y, one trip around the curve per cycle, so the key you play sets how
 fast the beam goes round. The tube shows exactly what you hear.
 
+![Scope Synth playing PHOSPHOR LEAD](screenshots/main.png)
+
+| | | | |
+|:-:|:-:|:-:|:-:|
+| [![AURORA PAD, its LFO cables, PINK theme](screenshots/thumbs/pad.png)](screenshots/pad.png) | [![ARP SPARKLE: an arp drawn on the LFO, CYAN theme](screenshots/thumbs/arp.png)](screenshots/arp.png) | [![The preset list, AMBER theme](screenshots/thumbs/presets.png)](screenshots/presets.png) | [![Typing your own shape, WHITE theme](screenshots/thumbs/editor.png)](screenshots/editor.png) |
+| Pad with LFO cables | Arp drawn on the LFO | Presets | Your own shapes |
+
 - **2 oscillators**, each with a small preview of its shape and MORPH, OCT,
   SEMI, FINE, ROTATE, LEVEL and VOICES (1-8 copies detuned across 20 cents).
 - **Shape lists:** an oscillator starts with one shape. `<` `>` pick the
