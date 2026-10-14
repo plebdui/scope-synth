@@ -658,7 +658,7 @@ int main(int argc, char** argv)
         std::printf("state: %s\n", shown.c_str());
     }
     // ---- turn the filter's CUTOFF knob down
-    drag(child, X(494), Y(538), X(494), Y(538 + 60));
+    drag(child, X(568), Y(538), X(568), Y(538 + 60));
     std::printf("CUTOFF dragged down: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
     const bool cutoffDown = gLastParam == base + 67 && gLastValue < 0.8;
     midi(48, 110); pump(0.3); midi(55, 110);
