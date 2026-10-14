@@ -18,6 +18,10 @@ fast the beam goes round. The tube shows exactly what you hear.
   `3t` for `3*t`.
 - **ENV** (attack, decay, sustain, release): every note's volume, and linkable.
 - **LFO** (sine, triangle, saw, square, random): one for all notes, linkable.
+  **SYNC** locks it to the song (1/1 to 1/32, triplets, dotted). **DRAW** turns
+  it into 1-16 steps you draw in its graph, snapped to 1/12: link it to SEMI at
+  +50% and each step is a semitone, which is how the ARP presets work. A fresh
+  key press starts the pattern from step 1 (unless it's following the song).
 - **Linking, like Serum:** drag the ENV or LFO handle onto a control. It gets a
   coloured range line and a tag; drag the tag up/down to set how much
   (negative works too), right-click it to unlink.

@@ -72,6 +72,12 @@ void ScopeSynthPlugin::initParameter(uint32_t index, Parameter& p)
         p.enumValues.count = 5; p.enumValues.restrictedMode = true; p.enumValues.values = v;
         p.enumValues.deleteLater = false;
     }
+    if (index == kLfoDiv) {
+        static ParameterEnumerationValue v[12];
+        for (int i = 0; i < 12; ++i) { v[i].value = (float)i; v[i].label = kDivNames[i]; }
+        p.enumValues.count = 12; p.enumValues.restrictedMode = true; p.enumValues.values = v;
+        p.enumValues.deleteLater = false;
+    }
     if (index == kFilterType) {
         static ParameterEnumerationValue v[5];
         for (int i = 0; i < 5; ++i) { v[i].value = (float)i; v[i].label = kFilterTypes[i]; }
@@ -134,6 +140,12 @@ void ScopeSynthPlugin::run(const float**, float** outputs, uint32_t frames,
     float* R = outputs[1];
     uiNotes.drain([this](int note, int vel) { vel ? fEngine.noteOn(note, vel) : fEngine.noteOff(note); });
     const ss::ShapeSet& shapes = *fShapes.load(std::memory_order_acquire);
+    const TimePosition& tp = getTimePosition();  // for LFO SYNC
+    if (tp.bbt.valid)
+        fEngine.setTransport(tp.playing, (tp.bbt.bar - 1) * (double)tp.bbt.beatsPerBar + (tp.bbt.beat - 1) + tp.bbt.tick / tp.bbt.ticksPerBeat,
+                             tp.bbt.beatsPerMinute);
+    else
+        fEngine.setTransport(false, 0, 120);
     uint32_t done = 0;
     for (uint32_t e = 0; e <= midiEventCount; ++e) {  // play up to each note, right on its sample
         const uint32_t at = e < midiEventCount ? std::min(midiEvents[e].frame, frames) : frames;
@@ -148,6 +160,7 @@ void ScopeSynthPlugin::run(const float**, float** outputs, uint32_t frames,
     ring.write(L, R, frames);
     live.env.store(fEngine.envNow(), std::memory_order_relaxed);
     live.lfo.store(fEngine.lfoNow(), std::memory_order_relaxed);
+    live.lfoPhase.store(fEngine.lfoPhase(), std::memory_order_relaxed);
     live.note.store(fEngine.newestNote(), std::memory_order_relaxed);
     live.pitch.store(fEngine.newestPitch(), std::memory_order_relaxed);
     live.voices.store(fEngine.activeVoices(), std::memory_order_relaxed);

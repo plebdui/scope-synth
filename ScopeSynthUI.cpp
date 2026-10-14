@@ -110,6 +110,9 @@ struct Box {
 
 static constexpr float kFilterX = 362;     // the FILTER panel, in the bottom strip
 static const Box kFilterGraph = {kFilterX + 310, kStripY + 16, 180, 66};
+// the LFO: its graph (DRAW: you draw the steps in it), and SYNC / DRAW / STEPS in its title line
+static const Box kLfoGraph = {kR + 162, kLfoY + 22, 254, 78};
+static const Box kSyncBox = {kR + 78, kLfoY, 64, 13}, kDrawBox = {kR + 146, kLfoY, 64, 13}, kStepsBox = {kR + 214, kLfoY, 100, 13};
 static const Box kHandle[2] = {{kR + 424, kEnvY + 22, 86, 78}, {kR + 424, kLfoY + 22, 86, 78}};
 static const Box kOctDown = {kW - 150, kStripY + 34, 34, 28}, kOctUp = {kW - 46, kStripY + 34, 34, 28};
 
@@ -171,6 +174,7 @@ protected:
     {
         if (index < (uint32_t)kParamCount) {
             fValues[index] = value;
+            if (index == kLfoSync) syncRate();
             repaint();
         }
     }
@@ -244,6 +248,7 @@ protected:
             const LiveState& lv = plugin->live;
             fEnv = lv.env.load(std::memory_order_relaxed);
             fLfo = lv.lfo.load(std::memory_order_relaxed);
+            fLfoPhase = lv.lfoPhase.load(std::memory_order_relaxed);
             fNote = lv.note.load(std::memory_order_relaxed);
             fPitch = lv.pitch.load(std::memory_order_relaxed);
             fVoices = lv.voices.load(std::memory_order_relaxed);
@@ -349,6 +354,7 @@ protected:
                 fLinkSrc = -1;
                 repaint();
             }
+            fDrawing = false;
             if (fDragParam >= 0) {
                 editParameter(fDragParam, false);
                 fDragParam = -1;
@@ -366,6 +372,7 @@ protected:
             return true;
         }
         if (playlistClick(ev.button, x, y)) return true;
+        if (lfoTitleClick(ev.button, x, y)) return true;
         for (int src = 0; src < kNumSources; ++src)
             if (ev.button == 1 && kHandle[src].has(x, y)) {
                 fLinkSrc = src;
@@ -422,6 +429,10 @@ protected:
             repaint();
             return true;
         }
+        if (fDrawing) {
+            drawStep(x, y, false);
+            return true;
+        }
         if (fKbNote >= 0) {  // slide along the keys
             const int k = y >= kKeysY ? keyAt(x, y) : -1;
             if (k != fKbNote && k >= 0) {
@@ -474,7 +485,7 @@ private:
     int fDumps = 0;
     float fBlink = 0;
     // live from the plugin
-    float fEnv = 0, fLfo = 0, fPitch = 0;
+    float fEnv = 0, fLfo = 0, fLfoPhase = 0, fPitch = 0;
     int fNote = -1, fVoices = 0;
     double fAnim = 0;
     uint64_t fKeys[2] = {0, 0};
@@ -652,6 +663,42 @@ private:
         }
     }
 
+    // SYNC on: the LFO's RATE control becomes a note length
+    void syncRate()
+    {
+        for (Ctl& c : fCtls)
+            if (c.param == kLfoRate || c.param == kLfoDiv) c.param = fValues[kLfoSync] > 0.5f ? kLfoDiv : kLfoRate;
+    }
+
+    // DRAW: set the step under the pointer (snapped to 1/12, so linked to SEMI at +50% each step is a semitone)
+    bool fDrawing = false;
+    void drawStep(float x, float y, bool zero)
+    {
+        const Box& g = kLfoGraph;
+        const int n = std::clamp((int)std::lround(fValues[kLfoSteps]), 1, 16);
+        const int i = std::clamp((int)((x - g.x - 4) / (g.w - 8) * n), 0, n - 1);
+        float v = zero ? 0.0f : (g.y + g.h / 2 - y) / (g.h / 2 - 6);
+        v = std::round(std::clamp(v, -1.0f, 1.0f) * 12) / 12;
+        if (fValues[kLfoStep0 + i] != v) setValue(kLfoStep0 + i, v, true);
+    }
+
+    bool lfoTitleClick(int button, float x, float y)
+    {
+        if (kSyncBox.has(x, y)) { if (button == 1) setValue(kLfoSync, fValues[kLfoSync] > 0.5f ? 0.0f : 1.0f, true); return true; }
+        if (kDrawBox.has(x, y)) { if (button == 1) setValue(kLfoDraw, fValues[kLfoDraw] > 0.5f ? 0.0f : 1.0f, true); return true; }
+        if (fValues[kLfoDraw] > 0.5f && kStepsBox.has(x, y)) {  // STEPS < n >: left half fewer, right half more
+            const float dir = x < kStepsBox.x + kStepsBox.w / 2 ? -1.0f : 1.0f;
+            setValue(kLfoSteps, std::clamp(std::round(fValues[kLfoSteps]) + dir, 1.0f, 16.0f), true);
+            return true;
+        }
+        if (fValues[kLfoDraw] > 0.5f && kLfoGraph.has(x, y)) {
+            fDrawing = button == 1;
+            drawStep(x, y, button == 3);
+            return true;
+        }
+        return false;
+    }
+
     void startDrag(int p, float y)
     {
         fDragParam = p;
@@ -665,6 +712,7 @@ private:
     {
         v = std::clamp(v, paramMin(p), paramMax(p));
         fValues[p] = v;
+        if (p == kLfoSync) syncRate();
         if (gesture) editParameter(p, true);
         setParameterValue(p, v);
         if (gesture) editParameter(p, false);
@@ -1077,27 +1125,54 @@ private:
     {
         const float y0 = kLfoY;
         panel({kR, y0, kW - kR, kRowH}, "LFO");
-        const Box g = {kR + 162, y0 + 22, 254, 78};
+        const bool sync = fValues[kLfoSync] > 0.5f, draw = fValues[kLfoDraw] > 0.5f;
+        auto toggle = [&](const Box& b, const char* text, bool on) {
+            fillBox(b, kBg);
+            label(b.x + 4, b.y + 6.5f, (std::string(on ? "[x] " : "[ ] ") + text).c_str(), on ? kBright : kDim, 10);
+        };
+        toggle(kSyncBox, "SYNC", sync);
+        toggle(kDrawBox, "DRAW", draw);
+        const Color& lc = kSrcCol[kSrcLfo];
+        const Box& g = kLfoGraph;
         outline(g, kFaint);
-        const int wave = (int)std::lround(fValues[kLfoWave]);
-        beginPath();
-        for (int i = 0; i <= 120; ++i) {
-            const float p = i / 120.0f;
-            float v;
-            switch (wave) {
-            case 1: v = 1 - 4 * std::fabs(p - 0.5f); break;
-            case 2: v = 2 * p - 1; break;
-            case 3: v = p < 0.5f ? 1.0f : -1.0f; break;
-            case 4: { static const float st[6] = {0.4f, -0.7f, 0.9f, -0.2f, 0.6f, -0.9f}; v = st[std::min((int)(p * 6), 5)]; break; }
-            default: v = std::sin(6.2831853f * p); break;
+        const float mid = g.y + g.h / 2, amp = g.h / 2 - 6;
+        if (draw) {
+            const int n = std::clamp((int)std::lround(fValues[kLfoSteps]), 1, 16);
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "STEPS < %d >", n);
+            fillBox(kStepsBox, kBg);
+            label(kStepsBox.x + 4, kStepsBox.y + 6.5f, buf, kBright, 10);
+            // the steps as bars from the middle line, the one playing now lit
+            const int now = fNote >= 0 ? std::min((int)(fLfoPhase * n), n - 1) : -1;
+            const float sw = (g.w - 8) / n;
+            fillBox({g.x + 2, mid, g.w - 4, 1}, kFaint);
+            for (int i = 0; i < n; ++i) {
+                const float v = fValues[kLfoStep0 + i], x = g.x + 4 + i * sw;
+                const float top = std::min(mid, mid - amp * v), h = std::max(std::fabs(amp * v), 1.5f);
+                fillBox({x + 1, top, sw - 2, h}, i == now ? lc : Color(lc.red, lc.green, lc.blue, 0.45f));
+                fillBox({x + 1, mid - amp * v - 1, sw - 2, 2}, lc);
             }
-            const float x = g.x + 4 + (g.w - 8) * p, y = g.y + g.h / 2 - (g.h / 2 - 6) * v;
-            if (i == 0) moveTo(x, y); else lineTo(x, y);
+        } else {
+            const int wave = (int)std::lround(fValues[kLfoWave]);
+            beginPath();
+            for (int i = 0; i <= 120; ++i) {
+                const float p = i / 120.0f;
+                float v;
+                switch (wave) {
+                case 1: v = 1 - 4 * std::fabs(p - 0.5f); break;
+                case 2: v = 2 * p - 1; break;
+                case 3: v = p < 0.5f ? 1.0f : -1.0f; break;
+                case 4: { static const float st[6] = {0.4f, -0.7f, 0.9f, -0.2f, 0.6f, -0.9f}; v = st[std::min((int)(p * 6), 5)]; break; }
+                default: v = std::sin(6.2831853f * p); break;
+                }
+                const float x = g.x + 4 + (g.w - 8) * p, y = mid - amp * v;
+                if (i == 0) moveTo(x, y); else lineTo(x, y);
+            }
+            strokeColor(lc);
+            strokeWidth(1.3f);
+            stroke();
+            fillBox({g.x + 2, mid - amp * fLfo, g.w - 4, 1}, Color(lc.red, lc.green, lc.blue, 0.45f));
         }
-        strokeColor(kSrcCol[kSrcLfo]);
-        strokeWidth(1.3f);
-        stroke();
-        fillBox({g.x + 2, g.y + g.h / 2 - (g.h / 2 - 6) * fLfo, g.w - 4, 1}, Color(80, 220, 255, 0.45f));
         drawHandle(kSrcLfo);
     }
 
@@ -1195,6 +1270,7 @@ private:
             else std::snprintf(out, n, "%.2fs", v);
             break;
         case kLfoRate: std::snprintf(out, n, "%.2fHz", v); break;
+        case kLfoDiv: std::snprintf(out, n, "%s", kDivNames[std::clamp((int)std::lround(v), 0, 11)]); break;
         case kFilterType: std::snprintf(out, n, "%s", kFilterTypes[std::clamp((int)std::lround(v), 0, 4)]); break;
         case kCutoff:
             if (v < 1000) std::snprintf(out, n, "%dHz", (int)std::lround(v));
@@ -1228,7 +1304,8 @@ private:
         const int d = destIndex(p);
         if (fLinkSrc >= 0 && d >= 0)  // dragging a link: show where it can go
             outline({c.x + 2, c.y + 2, c.w - 4, c.h - 4}, Color(kSrcCol[fLinkSrc].red, kSrcCol[fLinkSrc].green, kSrcCol[fLinkSrc].blue, 0.7f));
-        const bool dim = (p == kAShape || p == kBShape) && slots(p == kBShape) < 2;  // one shape: nothing to morph
+        const bool dim = ((p == kAShape || p == kBShape) && slots(p == kBShape) < 2)  // one shape: nothing to morph
+                      || (p == kLfoWave && fValues[kLfoDraw] > 0.5f);                 // DRAW replaces the wave
         label(cx, c.y + 12, info(p).caption, dim ? kFaint : kDim, 9.5f, ALIGN_CENTER | ALIGN_MIDDLE);
         if (kind == kSwitch) {
             const bool on = fValues[p] > 0.5f;
@@ -1237,7 +1314,7 @@ private:
             return;
         }
         if (kind == kChoice) {
-            label(cx, c.y + 38, (std::string("< ") + buf + " >").c_str(), kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
+            label(cx, c.y + 38, (std::string("< ") + buf + " >").c_str(), dim ? kDim : kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
             return;
         }
         const float n = toNorm(p, fValues[p]);

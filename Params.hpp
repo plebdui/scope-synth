@@ -21,7 +21,8 @@ enum Param {
     kASlots, kASlot0, kBSlots = kASlot0 + kMaxSlots, kBSlot0,  // each oscillator's shape list (parameters, so they can be automated)
     kModBase = kBSlot0 + kMaxSlots,                      // then ENV -> each of the first 12 destinations, then LFO -> each
     kFilterType = kModBase + 2 * 12, kCutoff, kRes,      // added in 1.1 (after the 1.0 ones, so 1.0 projects still load)
-    kModBase2,                                           // ENV, LFO -> each destination added since 1.0, a pair each
+    kLfoSync, kLfoDiv, kLfoDraw, kLfoSteps, kLfoStep0,   // LFO: tempo sync, and DRAW mode's steps
+    kModBase2 = kLfoStep0 + 16,                                           // ENV, LFO -> each destination added since 1.0, a pair each
 };
 
 // knobs the ENV and LFO can be linked to
@@ -114,10 +115,33 @@ static const ParamInfo kInfo[kModBase2] = {
     {"Filter Type", "filter_type", "TYPE", "", 0, 4, 0, kLin, kChoice},
     {"Cutoff", "cutoff", "CUTOFF", "Hz", 20, 20000, 20000, kLog, kKnob},
     {"Resonance", "res", "RES", "%", 0, 1, 0, kLin, kKnob},
+    {"LFO Sync", "lfo_sync", "SYNC", "", 0, 1, 0, kLin, kSwitch},
+    {"LFO Division", "lfo_div", "RATE", "", 0, 11, 4, kLin, kChoice},
+    {"LFO Draw", "lfo_draw", "DRAW", "", 0, 1, 0, kLin, kSwitch},
+    {"LFO Steps", "lfo_steps", "STEPS", "", 1, 16, 8, kLin, kInt},
+    {"LFO Step 1", "lfo_step1", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 2", "lfo_step2", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 3", "lfo_step3", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 4", "lfo_step4", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 5", "lfo_step5", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 6", "lfo_step6", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 7", "lfo_step7", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 8", "lfo_step8", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 9", "lfo_step9", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 10", "lfo_step10", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 11", "lfo_step11", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 12", "lfo_step12", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 13", "lfo_step13", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 14", "lfo_step14", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 15", "lfo_step15", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"LFO Step 16", "lfo_step16", "STEP", "", -1, 1, 0, kLin, kKnob},
 };
 
 static const char* const kLfoWaves[5] = {"SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"};
 static const char* const kFilterTypes[5] = {"LP12", "LP24", "HP", "BP", "NOTCH"};
+// LFO SYNC: note lengths, and how many beats each is
+static const char* const kDivNames[12] = {"1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T", "1/4.", "1/8.", "1/16."};
+static const double kDivBeats[12] = {4, 2, 1, 0.5, 0.25, 0.125, 2.0 / 3, 1.0 / 3, 1.0 / 6, 1.5, 0.75, 0.375};
 
 // any parameter's range and kind (link amounts: -1..1)
 inline const ParamInfo& info(int p)

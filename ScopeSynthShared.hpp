@@ -56,7 +56,7 @@ struct NoteQueue {
 
 // What the window shows, written by the audio thread after every block
 struct LiveState {
-    std::atomic<float> env{0}, lfo{0}, pitch{0};
+    std::atomic<float> env{0}, lfo{0}, lfoPhase{0}, pitch{0};
     std::atomic<int> note{-1}, voices{0};
     std::atomic<double> anim{0};
     std::atomic<uint64_t> keys[2] = {{0}, {0}};  // keys held down, from MIDI or the window

@@ -43,6 +43,25 @@ static float pitchOf(const std::vector<float>& x, float sr)
     return 0;
 }
 
+// pitch of a stretch of sound (both channels), from its first strong repeat
+static float pitchAt(const std::vector<float>& l, const std::vector<float>& r, int from, int n, float sr)
+{
+    std::vector<float> x(n + 1200);
+    for (int i = 0; i < n + 1200; ++i) x[i] = l[from + i] + r[from + i];
+    const int lo = (int)(sr / 2000), hi = (int)(sr / 50);
+    std::vector<float> c(hi);
+    float best = 0;
+    for (int t = lo; t < hi; ++t) {
+        double s = 0, e = 0;
+        for (int i = 0; i < n; ++i) { s += x[i] * x[i + t]; e += x[i + t] * x[i + t]; }
+        c[t] = (float)(s / std::sqrt(e + 1e-12));
+        best = std::max(best, c[t]);
+    }
+    for (int t = lo + 1; t < hi - 1; ++t)
+        if (c[t] >= 0.9f * best && c[t] >= c[t - 1] && c[t] >= c[t + 1]) return sr / t;
+    return 0;
+}
+
 static std::vector<float> run(Engine& e, int frames, std::vector<float>* right = nullptr)
 {
     std::vector<float> l(frames), r(frames);
@@ -311,6 +330,36 @@ int main()
         const double h = energy(0), c = energy(1), half = energy(0.5f);
         EXPECT(std::fabs(h - c) > 1e-4 && std::fabs(half - h) > 1e-5 && std::fabs(half - c) > 1e-5,
                "MORPH 0 / 50%% / 100%% through HEART > CUBE all differ (L*R %.4f %.4f %.4f)", h, half, c);
+    }
+    {
+        // DRAW + SYNC: an arp. 120 bpm, 1/16 a step, steps 0 4 7 12 semitones (LFO -> SEMI at +50% = 1 step of 1/12 a semitone)
+        defaults();
+        P[kLfoDraw] = 1; P[kLfoSync] = 1; P[kLfoDiv] = 4; P[kLfoSteps] = 4;
+        const float st[4] = {0, 4, 7, 12};
+        for (int i = 0; i < 4; ++i) P[kLfoStep0 + i] = st[i] / 12;
+        P[modParam(kSrcLfo, destIndex(kASemi))] = 0.5f;
+        P[kSustain] = 1;
+        Engine e(P); e.setSampleRate(sr);
+        e.setTransport(true, 0, 120);
+        e.noteOn(57, 127);
+        std::vector<float> r;
+        auto l = run(e, 6000 * 8, &r);
+        bool ok = true;
+        char got[96] = "";
+        for (int w = 0; w < 8; ++w) {
+            const float want = 220.0f * std::exp2(st[w % 4] / 12), f = pitchAt(l, r, w * 6000 + 1500, 3000, sr);
+            ok = ok && std::fabs(f / want - 1) < 0.02f;
+            std::snprintf(got + std::strlen(got), sizeof(got) - std::strlen(got), " %.0f", f);
+        }
+        EXPECT(ok, "arp, synced at 120 bpm, 1/16: A C# E A twice:%s Hz", got);
+        // free running (no SYNC): RATE = steps a second, and a new press starts from step 1
+        P[kLfoSync] = 0; P[kLfoRate] = 8;
+        Engine f(P); f.setSampleRate(sr);
+        run(f, 1000);  // the LFO has moved on before the key goes down
+        f.noteOn(57, 127);
+        auto l2 = run(f, 6000 * 4, &r);
+        const float a0 = pitchAt(l2, r, 1000, 3000, sr), a1 = pitchAt(l2, r, 6000 + 1000, 3000, sr);
+        EXPECT(std::fabs(a0 / 220 - 1) < 0.02f && std::fabs(a1 / 277.18f - 1) < 0.02f, "arp, free at 8 steps/s: starts on step 1 (%.0f, then %.0f Hz)", a0, a1);
     }
     // every factory preset: a note and a chord make sound, cleanly
     for (const Preset& pr : presets()) {

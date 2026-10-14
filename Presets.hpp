@@ -74,11 +74,18 @@ inline const std::vector<Preset>& presets()
                               {kFilterType, 2}, {kCutoff, 400}, {kRes, 0.3f}, {kAttack, 0.01f}, {kDecay, 1},
                               {kSustain, 0.5f}, {kRelease, 1.5f}}},
 
+        // arps: the LFO in DRAW mode, synced, linked to SEMI at +50% so each step of 1/12 is a semitone
         {"ARP", "ARP BLIP", {{kASlot0, 4}, {kAOct, 1}, {kCutoff, 3000}, {kRes, 0.4f}, {env(kCutoff), 0.3f},
-                             {kAttack, 0.001f}, {kDecay, 0.12f}, {kSustain, 0}, {kRelease, 0.08f}}},
-        {"ARP", "ARP SPARKLE", {{kASlot0, 0}, {kBSlot0, 1}, {kBOct, 1}, {kBSemi, 7}, {kBLevel, 0.4f},
-                                {kDecay, 0.18f}, {kSustain, 0}, {kRelease, 0.2f}, {kLfoRate, 4}, {kLfoWave, 3},
-                                {lfo(kARot), 0.25f}}},
+                             {kAttack, 0.001f}, {kDecay, 0.3f}, {kSustain, 0.8f}, {kRelease, 0.08f},
+                             {kLfoDraw, 1}, {kLfoSync, 1}, {kLfoDiv, 4}, {kLfoSteps, 4},
+                             {kLfoStep0, 0}, {kLfoStep0 + 1, 3 / 12.0f}, {kLfoStep0 + 2, 7 / 12.0f}, {kLfoStep0 + 3, 1},
+                             {lfo(kASemi), 0.5f}, {kVolume, 0.55f}}},
+        {"ARP", "ARP SPARKLE", {{kASlot0, 0}, {kBSlot0, 1}, {kBOct, 1}, {kBLevel, 0.4f}, {kSustain, 0.7f},
+                                {kDecay, 0.2f}, {kRelease, 0.2f}, {kLfoDraw, 1}, {kLfoSync, 1}, {kLfoDiv, 4},
+                                {kLfoSteps, 8}, {kLfoStep0, 0}, {kLfoStep0 + 1, 4 / 12.0f}, {kLfoStep0 + 2, 7 / 12.0f},
+                                {kLfoStep0 + 3, 11 / 12.0f}, {kLfoStep0 + 4, 1}, {kLfoStep0 + 5, 11 / 12.0f},
+                                {kLfoStep0 + 6, 7 / 12.0f}, {kLfoStep0 + 7, 4 / 12.0f},
+                                {lfo(kASemi), 0.5f}, {lfo(kBSemi), 0.5f}, {kVolume, 0.6f}}},
 
         {"KEYS", "SCOPE EP", {{kASlot0, 1}, {kBSlot0, 0}, {kBOct, 1}, {kBLevel, 0.3f}, {kCutoff, 2500},
                               {env(kCutoff), 0.3f}, {kAttack, 0.002f}, {kDecay, 1.2f}, {kSustain, 0.35f},

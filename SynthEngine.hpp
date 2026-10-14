@@ -79,6 +79,8 @@ public:
             return;
         }
         note &= 127;
+        // DRAW (an arp): a fresh press starts the pattern from step 1, unless it follows the song
+        if (!keys[0] && !keys[1] && drawMode() && !(P[kLfoSync] > 0.5f && songPlaying)) lfoPh = 0;
         keys[note >> 6] |= 1ull << (note & 63);
         const float vel = 0.25f + 0.75f * std::min(velocity, 127) / 127.0f;
         const float glide = P[kGlide];
@@ -150,6 +152,14 @@ public:
 
     void pitchBend(float semitones) { bend = semitones; }
 
+    // the song's tempo and position (in beats) from the host, at the start of each block
+    void setTransport(bool playing, double beat, double bpm)
+    {
+        songPlaying = playing;
+        songBeat = beat;
+        songBpm = bpm > 0 ? bpm : 120;
+    }
+
     // all notes off: let them ring out, or (hard) stop at once
     void allOff(bool hard)
     {
@@ -185,6 +195,7 @@ public:
     // what the window shows
     float envNow() const { const Voice* v = newest(); return v ? v->env : 0.0f; }
     float lfoNow() const { return lfoVal; }
+    float lfoPhase() const { return (float)lfoPh; }
     int newestNote() const { const Voice* v = newest(); return v ? v->note : -1; }
     float newestPitch() const { const Voice* v = newest(); return v ? v->pitch + bend : 0.0f; }
     int activeVoices() const { int c = 0; for (const Voice& v : voices) c += v.active; return c; }
@@ -227,6 +238,8 @@ private:
     float bend = 0;
     int wasPoly = -1;
     double lfoPh = 0, u = 0;
+    bool songPlaying = false;
+    double songBeat = 0, songBpm = 120;
     float lfoVal = 0, lfoHold = 0;
     uint32_t rng = 12345;
     float dcIn[2] = {0, 0}, dcOut[2] = {0, 0};
@@ -322,8 +335,21 @@ private:
         numHeld = k;
     }
 
+    bool drawMode() const { return P[kLfoDraw] > 0.5f; }
+    int lfoSteps() const { return std::clamp((int)std::lround(P[kLfoSteps]), 1, 16); }
+    // SYNC: one LFO cycle in beats (DRAW: the note length is one step, so all the steps)
+    double cycleBeats() const
+    {
+        const double d = kDivBeats[std::clamp((int)std::lround(P[kLfoDiv]), 0, 11)];
+        return drawMode() ? d * lfoSteps() : d;
+    }
+
     float lfoShape(double p)
     {
+        if (drawMode()) {
+            const int n = lfoSteps();
+            return std::clamp(P[kLfoStep0 + std::min((int)(p * n), n - 1)], -1.0f, 1.0f);
+        }
         switch ((int)std::lround(P[kLfoWave])) {
         case 1: return (float)(1 - 4 * std::fabs(p - 0.5));
         case 2: return (float)(2 * p - 1);
@@ -340,10 +366,19 @@ private:
         const Voice* nv = newest();
         const float envN = nv ? nv->env : 0.0f;
 
-        // the LFO: one for all notes, free running
-        lfoVal = lfoShape(lfoPh);
-        const float rate = modulated(kLfoRate, envN, lfoVal);
-        lfoPh += rate * m / sr;
+        // the LFO: one for all notes. Free: RATE in Hz (DRAW: steps a second).
+        // SYNC: a note length at the song's tempo, in step with the song while it plays.
+        double inc;
+        if (P[kLfoSync] > 0.5f) {
+            if (songPlaying) lfoPh = songBeat / cycleBeats() - std::floor(songBeat / cycleBeats());
+            lfoVal = lfoShape(lfoPh);
+            inc = songBpm / 60 * m / sr / cycleBeats();
+        } else {
+            lfoVal = lfoShape(lfoPh);
+            inc = modulated(kLfoRate, envN, lfoVal) * m / sr / (drawMode() ? lfoSteps() : 1);
+        }
+        songBeat += songBpm / 60 * m / sr;
+        lfoPh += inc;
         if (lfoPh >= 1) {
             lfoPh -= std::floor(lfoPh);
             rng = rng * 1664525u + 1013904223u;

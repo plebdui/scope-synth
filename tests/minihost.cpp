@@ -498,7 +498,7 @@ int main(int argc, char** argv)
     static Handler handler;
     v3_cpp_obj(ctrl)->set_component_handler(ctrl, (v3_component_handler**)&handler);
     const int nParams = v3_cpp_obj(ctrl)->get_parameter_count(ctrl);
-    const int base = nParams - 73;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
+    const int base = nParams - 93;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
     std::printf("parameters: %d (synth's own from %d)\n", nParams, base);
 
     v3_audio_processor** proc = nullptr;
@@ -666,6 +666,14 @@ int main(int argc, char** argv)
     midi(48, 0); midi(55, 0);
     pump(1.0);
 
+    // ---- LFO DRAW: tick DRAW in the LFO's title line, then draw across the top of its graph
+    click(child, X(500 + 146 + 10), Y(390 + 6));
+    std::printf("DRAW click: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
+    const bool drawOn = gLastParam == base + 71 && gLastValue == 1;  // LFO Draw
+    drag(child, X(500 + 170), Y(390 + 22 + 10), X(500 + 400), Y(390 + 22 + 10));
+    std::printf("DRAW ticked: %s; drawing set param %d -> %.3f\n", drawOn ? "yes" : "NO", gLastParam.load(), gLastValue.load());
+    const bool drawn = drawOn && gLastParam >= base + 73 && gLastParam < base + 73 + 8 && std::fabs(gLastValue - (11.0 / 12 + 1) / 2) < 1e-4;
+
     // ---- presets: open the menu, pick BASS / SUB SCOPE (row 3: INIT, # BASS, SUB SCOPE), play it
     click(child, X(300), X(14));
     click(child, X(250), X(28 + 4 + 2 * 16 + 8));
@@ -711,6 +719,7 @@ int main(int argc, char** argv)
     CHECK(levelUp, "dragging OSC B LEVEL up should raise it");
     CHECK(monoPk > 0.05f, "MONO notes make sound");
     CHECK(typed, "a typed shape should be saved with the project");
+    CHECK(drawn, "ticking DRAW and drawing in the LFO graph should set its steps");
     CHECK(cutoffDown, "dragging CUTOFF down should lower it");
     CHECK(presetSaved && presetPk > 0.05f, "picking a preset from the menu should load it and play");
     CHECK(slotAdded, "+ should add a slot through the A Shapes parameter");
