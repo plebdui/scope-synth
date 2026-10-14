@@ -15,6 +15,7 @@
 #include "CrtTube.hpp"
 #include "MonoFont.hpp"
 #include "Presets.hpp"
+#include "PresetFiles.hpp"
 #include "OpenGL.hpp"
 
 #include <chrono>
@@ -26,6 +27,12 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 START_NAMESPACE_DISTRHO
 
@@ -58,7 +65,8 @@ static const Theme kThemes[] = {
 };
 static constexpr int kNumThemes = sizeof(kThemes) / sizeof(kThemes[0]);
 
-// your settings (just the theme), shared by every copy of the plugin
+// your settings (theme, author name), shared by every copy of the plugin;
+// your presets live next to them, in Presets/
 static std::filesystem::path settingsFile()
 {
     namespace fs = std::filesystem;
@@ -75,25 +83,41 @@ static std::filesystem::path settingsFile()
     return home ? fs::path(home) / ".config" / "scope-synth" / "settings.txt" : fs::path();
 #endif
 }
-static int loadTheme()
+static std::string loadSetting(const std::string& key)
 {
     std::ifstream in(settingsFile());
     std::string line;
     while (std::getline(in, line))
-        if (line.rfind("theme=", 0) == 0) {
-            for (int i = 0; i < kNumThemes; ++i)
-                if (line.substr(6) == kThemes[i].name) return i;
-        }
-    return 0;
+        if (line.rfind(key + "=", 0) == 0) return line.substr(key.size() + 1);
+    return "";
 }
-static void saveTheme(int t)
+static void saveSetting(const std::string& key, const std::string& value)
 {
     const std::filesystem::path f = settingsFile();
     if (f.empty()) return;
+    std::vector<std::string> lines;
+    {
+        std::ifstream in(f);
+        std::string line;
+        while (std::getline(in, line))
+            if (line.rfind(key + "=", 0) != 0) lines.push_back(line);
+    }
+    lines.push_back(key + "=" + value);
     std::error_code ec;
     std::filesystem::create_directories(f.parent_path(), ec);
-    std::ofstream(f) << "theme=" << kThemes[t].name << "\n";
+    std::ofstream out(f);
+    for (const std::string& l : lines) out << l << "\n";
 }
+static int loadTheme()
+{
+    const std::string t = loadSetting("theme");
+    for (int i = 0; i < kNumThemes; ++i)
+        if (t == kThemes[i].name) return i;
+    return 0;
+}
+static void saveTheme(int t) { saveSetting("theme", kThemes[t].name); }
+static std::filesystem::path presetsFolder() { return settingsFile().parent_path() / "Presets"; }
+
 static const Color kErr(255, 95, 80);
 static const Color kSrcCol[2] = {Color(255, 180, 40), Color(80, 220, 255)};  // ENV amber, LFO cyan
 static const char* const kSrcName[2] = {"ENV", "LFO"};
@@ -126,7 +150,21 @@ static Box barNew(int o) { return {kR + 362, kOscY[o] + kBarDY, 70, kBarH}; }
 static Box barEdit(int o) { return {kR + 436, kOscY[o] + kBarDY, 72, kBarH}; }
 
 // the menu bar
-static const Box kPresetPrev = {150, 4, 20, 20}, kPresetName = {174, 4, 300, 20}, kPresetNext = {478, 4, 20, 20};
+static const Box kPresetPrev = {236, 4, 20, 20}, kPresetName = {260, 4, 300, 20}, kPresetNext = {564, 4, 20, 20};
+static const Box kSaveButton = {592, 4, 56, 20};
+// the SAVE form, over the scope: NAME, PACK, AUTHOR typed; CATEGORY clicked through
+static const Box kSaveField[3] = {{150, 120, 300, 24}, {150, 156, 300, 24}, {150, 228, 300, 24}};
+static const Box kSaveCat = {150, 192, 300, 24};
+static const Box kSaveOk = {100, 300, 130, 28}, kSaveCancel = {270, 300, 130, 28};
+// the logo, as block letters (drawn as little boxes and lines, so it's crisp at any size)
+static const char* const kLogo[6] = {
+    u8"███████╗ ██████╗ ██████╗ ██████╗ ███████╗    ███████╗██╗   ██╗███╗   ██╗████████╗██╗  ██╗",
+    u8"██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝    ██╔════╝╚██╗ ██╔╝████╗  ██║╚══██╔══╝██║  ██║",
+    u8"███████╗██║     ██║   ██║██████╔╝█████╗      ███████╗ ╚████╔╝ ██╔██╗ ██║   ██║   ███████║",
+    u8"╚════██║██║     ██║   ██║██╔═══╝ ██╔══╝      ╚════██║  ╚██╔╝  ██║╚██╗██║   ██║   ██╔══██║",
+    u8"███████║╚██████╗╚██████╔╝██║     ███████╗    ███████║   ██║   ██║ ╚████║   ██║   ██║  ██║",
+    u8"╚══════╝ ╚═════╝ ╚═════╝ ╚═╝     ╚══════╝    ╚══════╝   ╚═╝   ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝",
+};
 static const Box kGear = {kW - 34, 3, 26, 22};
 static constexpr float kMenuRow = 16;
 
@@ -151,10 +189,12 @@ public:
             fCtls.push_back({kAttack + i, kR + 12 + i * 60.0f, kEnvY + 16, 60, 92});
         fCtls.push_back({kLfoRate, kR + 12, kLfoY + 16, 60, 92});
         fCtls.push_back({kLfoWave, kR + 74, kLfoY + 16, 84, 92});
-        fCtls.push_back({kPoly, 8, kStripY, 90, kStripH});
-        fCtls.push_back({kLegato, 100, kStripY, 90, kStripH});
-        fCtls.push_back({kGlide, 192, kStripY, 80, kStripH});
-        fCtls.push_back({kVolume, 274, kStripY, 80, kStripH});
+        fCtls.push_back({kPoly, 6, kStripY, 62, kStripH});
+        fCtls.push_back({kLegato, 68, kStripY, 60, kStripH});
+        fCtls.push_back({kGlide, 128, kStripY, 58, kStripH});
+        fCtls.push_back({kVolume, 186, kStripY, 56, kStripH});
+        fCtls.push_back({kSubLevel, 242, kStripY, 58, kStripH});   // click its caption: one or two octaves down
+        fCtls.push_back({kNoiseLevel, 300, kStripY, 58, kStripH});
         fCtls.push_back({kFilterType, kFilterX + 88, kStripY + 4, 84, kStripH - 4});
         fCtls.push_back({kCutoff, kFilterX + 174, kStripY + 4, 64, kStripH - 4});
         fCtls.push_back({kRes, kFilterX + 240, kStripY + 4, 64, kStripH - 4});
@@ -183,8 +223,11 @@ protected:
     void stateChanged(const char* key, const char* value) override
     {
         if (!value) return;
-        if (std::strcmp(key, "preset") == 0) {
-            fPresetName = value;
+        if (std::strcmp(key, "preset") == 0) {  // a factory preset's name, or PACK/NAME for one of yours
+            const std::string v = value;
+            const size_t slash = v.find('/');
+            fPresetPack = slash == std::string::npos ? "" : v.substr(0, slash);
+            fPresetName = slash == std::string::npos ? v : v.substr(slash + 1);
             repaint();
             return;
         }
@@ -196,6 +239,24 @@ protected:
     // ---- typing in the equation editor
     bool onKeyboard(const KeyboardEvent& ev) override
     {
+        if (fSaveOpen) {
+            if (!ev.press) return true;
+            std::string& f = fSaveText[fSaveFocus];
+            switch (ev.key) {
+            case kKeyBackspace:
+                if (fSaveFresh[fSaveFocus]) f.clear();
+                else if (!f.empty()) f.pop_back();
+                fSaveFresh[fSaveFocus] = false;
+                break;
+            case kKeyTab: fSaveFocus = (fSaveFocus + 1) % 3; break;
+            case kKeyEnter: saveUserPreset(); break;
+            case kKeyEscape: fSaveOpen = false; break;
+            case kKeyDelete: f.clear(); break;
+            default: break;
+            }
+            repaint();
+            return true;
+        }
         if (!fEdit) return false;
         if (!ev.press) return true;
         std::string& f = fField[fFocus];
@@ -213,6 +274,16 @@ protected:
 
     bool onCharacterInput(const CharacterInputEvent& ev) override
     {
+        if (fSaveOpen) {
+            const uint c = ev.character;
+            std::string& f = fSaveText[fSaveFocus];
+            const bool ok = c >= 32 && c < 127 && (fSaveFocus == 2 || std::isalnum((int)c) || c == ' ' || c == '-' || c == '_');
+            if (ok && fSaveFresh[fSaveFocus]) f.clear();
+            if (ok) fSaveFresh[fSaveFocus] = false;
+            if (ok && f.size() < 28) f += (char)(fSaveFocus == 2 ? c : std::toupper((int)c));
+            repaint();
+            return true;
+        }
         if (!fEdit) return false;
         const uint c = ev.character;
         if (c >= 32 && c < 127 && c != '|' && fField[fFocus].size() < 120) {  // | separates x and y when saved
@@ -300,6 +371,7 @@ protected:
         translate(0, kTop);  // everything else sits under the menu bar
         drawScopeLabels();
         if (fEdit) drawEditor();
+        if (fSaveOpen) drawSaveForm();
         for (int o = 0; o < 2; ++o)
             drawOscPanel(o);
         drawEnvPanel();
@@ -373,8 +445,25 @@ protected:
             }
             return true;
         }
+        if (fSaveOpen && x < kTube && y < kTube) {
+            if (ev.button != kMouseButtonLeft) return true;
+            for (int f = 0; f < 3; ++f)
+                if (kSaveField[f].has(x, y)) fSaveFocus = f;
+            if (kSaveCat.has(x, y)) {  // click through the categories (left half back)
+                const int n = (int)categories().size();
+                fSaveCat = (fSaveCat + (x < kSaveCat.x + kSaveCat.w / 2 ? n - 1 : 1)) % n;
+            }
+            if (kSaveOk.has(x, y)) saveUserPreset();
+            if (kSaveCancel.has(x, y)) fSaveOpen = false;
+            repaint();
+            return true;
+        }
+        if (ev.button == kMouseButtonLeft && Box{242, kStripY, 58, 18}.has(x, y)) {  // SUB's caption: -1 / -2 octaves
+            setValue(kSubOct, fValues[kSubOct] > -1.5f ? -2.0f : -1.0f, true);
+            return true;
+        }
         if (fEdit && x < kTube && y < kTube) {
-            if (ev.button != 1) return true;
+            if (ev.button != kMouseButtonLeft) return true;
             if (kEdSave.has(x, y)) editSave();
             else if (kEdCancel.has(x, y)) fEdit = false;
             else if (fEditId >= 0 && kEdDelete.has(x, y)) editDelete();
@@ -386,17 +475,17 @@ protected:
         if (playlistClick(ev.button, x, y)) return true;
         if (lfoTitleClick(ev.button, x, y)) return true;
         for (int src = 0; src < kNumSources; ++src)
-            if (ev.button == 1 && kHandle[src].has(x, y)) {
+            if (ev.button == kMouseButtonLeft && kHandle[src].has(x, y)) {
                 fLinkSrc = src;
                 return true;
             }
         if (y >= kKeysY) {
-            if (ev.button != 1) return false;
+            if (ev.button != kMouseButtonLeft) return false;
             fKbNote = keyAt(x, y);
             if (fKbNote >= 0) playNote(fKbNote, velocityAt(y));
             return true;
         }
-        if (ev.button == 1 && (kOctDown.has(x, y) || kOctUp.has(x, y))) {
+        if (ev.button == kMouseButtonLeft && (kOctDown.has(x, y) || kOctUp.has(x, y))) {
             fKbLow = std::clamp(fKbLow + (kOctUp.has(x, y) ? 12 : -12), 0, 36);
             repaint();
             return true;
@@ -407,8 +496,8 @@ protected:
                 Box t;
                 if (!tagBox(c, src, t) || !t.has(x, y)) continue;
                 const int mp = modParam(src, destIndex(c.param));
-                if (ev.button == 3) setValue(mp, 0, true);
-                else if (ev.button == 1) startDrag(mp, y);
+                if (ev.button == kMouseButtonRight) setValue(mp, 0, true);
+                else if (ev.button == kMouseButtonLeft) startDrag(mp, y);
                 return true;
             }
         const Ctl* c = ctlAt(x, y);
@@ -418,10 +507,10 @@ protected:
             setValue(c->param, fValues[c->param] > 0.5f ? 0.0f : 1.0f, true);
         } else if (kind == kChoice) {
             const int n = (int)paramMax(c->param) + 1;
-            setValue(c->param, (float)(((int)std::lround(fValues[c->param]) + (ev.button == 3 ? -1 : 1) + n) % n), true);
-        } else if (ev.button == 3) {  // right-click: back to the default
+            setValue(c->param, (float)(((int)std::lround(fValues[c->param]) + (ev.button == kMouseButtonRight ? -1 : 1) + n) % n), true);
+        } else if (ev.button == kMouseButtonRight) {  // right-click: back to the default
             setValue(c->param, paramDefault(c->param), true);
-        } else if (ev.button == 1) {
+        } else if (ev.button == kMouseButtonLeft) {
             startDrag(c->param, y);
         }
         return true;
@@ -521,7 +610,7 @@ private:
     enum { kNoMenu, kPresetMenu, kThemeMenu };
     int fMenu = kNoMenu;
     int fTheme = 0;
-    std::string fPresetName = "INIT";
+    std::string fPresetName = "INIT", fPresetPack;  // fPresetPack: one of your packs, "" = factory
 
     void applyTheme(int t)
     {
@@ -532,9 +621,26 @@ private:
         repaint();
     }
 
-    // the preset menu: INIT and the categories on the left, the pointed-at category's presets on the right
-    static constexpr float kCatW = 140;
-    std::string fMenuCat;
+    // a line along the top for a few seconds: "SAVED", "IMPORTED 12 PRESETS"...
+    std::string fToast;
+    float fToastUntil = 0;
+    void note(const std::string& n)
+    {
+        fToast = n;
+        fToastUntil = fBlink + 4;
+        repaint();
+    }
+
+    // ---- the preset menu. Left: INIT, the factory categories, your packs, IMPORT, OPEN FOLDER.
+    // Right: what's in the one pointed at (a pack also has EXPORT PACK at the bottom).
+    static constexpr float kCatW = 160;
+    std::string fMenuCat;     // a factory category, or one of your packs
+    bool fMenuIsPack = false;
+    int fDeleteArm = -1;      // right-clicked one of your presets: the next click on it deletes it
+    Packs fPacks;
+    enum { kRowInit, kRowCat, kRowHeader, kRowPack, kRowImport, kRowFolder };
+    struct Item { int kind; std::string text; };
+
     static std::vector<std::string> categories()
     {
         std::vector<std::string> cats;
@@ -549,10 +655,28 @@ private:
             if (cat == presets()[i].category) list.push_back(i);
         return list;
     }
+    std::vector<Item> leftItems() const
+    {
+        std::vector<Item> items = {{kRowInit, "INIT"}};
+        for (const std::string& c : categories()) items.push_back({kRowCat, c});
+        items.push_back({kRowHeader, "# YOUR PACKS"});
+        for (const std::string& p : fPacks.names) items.push_back({kRowPack, p});
+        items.push_back({kRowImport, "+ IMPORT..."});
+        items.push_back({kRowFolder, "OPEN FOLDER"});
+        return items;
+    }
+    const std::vector<UserPreset>& packPresets(const std::string& pack) const
+    {
+        static const std::vector<UserPreset> none;
+        const auto it = fPacks.presets.find(pack);
+        return it == fPacks.presets.end() ? none : it->second;
+    }
+    size_t rightRows() const { return fMenuIsPack ? packPresets(fMenuCat).size() + 1 : presetsIn(fMenuCat).size(); }
     Box presetMenuBox() const
     {
-        size_t rows = categories().size() + 1;
+        size_t rows = leftItems().size();
         for (const std::string& c : categories()) rows = std::max(rows, presetsIn(c).size());
+        rows = std::max(rows, rightRows());
         return {kPresetName.x, kTop, kCatW + 300, rows * kMenuRow + 8};
     }
     Box themeMenuBox() const { return {kW - 160, kTop, 154, (kNumThemes + 1) * kMenuRow + 8}; }
@@ -564,19 +688,32 @@ private:
         right = x >= b.x + kCatW;
         return (int)((wy - b.y - 4) / kMenuRow);
     }
-    void hoverCategory(float x, float wy)  // pointing at a category shows its presets
+    void hoverCategory(float x, float wy)  // pointing at a category or pack shows what's in it
     {
         bool right;
         const int r = menuRow(x, wy, right);
-        const auto cats = categories();
-        if (r >= 1 && r <= (int)cats.size() && !right) fMenuCat = cats[r - 1];
+        const auto items = leftItems();
+        if (r < 0 || right || r >= (int)items.size()) return;
+        if (items[r].kind == kRowCat || items[r].kind == kRowPack) {
+            if (fMenuCat != items[r].text) fDeleteArm = -1;
+            fMenuCat = items[r].text;
+            fMenuIsPack = items[r].kind == kRowPack;
+        }
     }
 
     int presetIndex() const
     {
+        if (!fPresetPack.empty()) return -1;
         const auto& list = presets();
         for (int i = 0; i < (int)list.size(); ++i)
             if (fPresetName == list[i].name) return i;
+        return -1;
+    }
+    int userIndex() const  // the one of yours that's loaded, in its pack
+    {
+        const auto& list = packPresets(fPresetPack);
+        for (int i = 0; i < (int)list.size(); ++i)
+            if (list[i].name == fPresetName) return i;
         return -1;
     }
 
@@ -584,7 +721,7 @@ private:
     {
         const auto& list = presets();
         i = (i + (int)list.size()) % (int)list.size();
-        fEdit = false;
+        fEdit = fSaveOpen = false;
         list[i].shapesInto(fSet);  // its typed shapes first, so its slots find them
         sendShapes();
         float v[kParamCount];
@@ -593,7 +730,190 @@ private:
             setValue(p, v[p], true);
         for (int o = 0; o < 2; ++o) fSel[o] = 0;
         fPresetName = list[i].name;
+        fPresetPack.clear();
         setState("preset", fPresetName.c_str());
+    }
+
+    void loadUser(const UserPreset& u)
+    {
+        fEdit = fSaveOpen = false;
+        u.shapesInto(fSet);
+        sendShapes();
+        for (int p = 0; p < kParamCount; ++p)
+            setValue(p, u.values[p], true);
+        for (int o = 0; o < 2; ++o) fSel[o] = 0;
+        fPresetName = u.name;
+        fPresetPack = u.pack;
+        setState("preset", (fPresetPack + "/" + fPresetName).c_str());
+    }
+
+    // < >: through the factory presets, or through the pack the loaded one of yours is in
+    void stepPreset(int dir)
+    {
+        if (!fPresetPack.empty()) {
+            fPacks = scanPacks(presetsFolder());
+            const auto& list = packPresets(fPresetPack);
+            if (!list.empty()) {
+                const int n = (int)list.size();
+                loadUser(list[((std::max(userIndex(), 0) + dir) % n + n) % n]);
+                return;
+            }
+        }
+        loadPreset(std::max(presetIndex(), 0) + dir);
+    }
+
+    // ---- SAVE: the form, then the file
+    bool fSaveOpen = false;
+    int fSaveFocus = 0, fSaveCat = 0;
+    std::string fSaveText[3];  // name, pack, author
+    bool fSaveFresh[3] = {};   // still the filled-in text: the first key replaces it
+
+    void openSaveForm()
+    {
+        fMenu = kNoMenu;
+        fEdit = false;
+        fSaveOpen = true;
+        fSaveFocus = 0;
+        const bool init = fPresetPack.empty() && fPresetName == "INIT";
+        fSaveText[0] = init ? "" : fPresetName;
+        fSaveText[1] = !fPresetPack.empty() ? fPresetPack : loadSetting("pack").empty() ? "MY PRESETS" : loadSetting("pack");
+        fSaveText[2] = loadSetting("author");
+        for (bool& f : fSaveFresh) f = true;
+        std::string cat = "SYNTH";
+        if (presetIndex() > 0) cat = presets()[presetIndex()].category;
+        else if (userIndex() >= 0) cat = packPresets(fPresetPack)[userIndex()].category;
+        const auto cats = categories();
+        fSaveCat = 0;
+        for (int c = 0; c < (int)cats.size(); ++c)
+            if (cats[c] == cat) fSaveCat = c;
+        fPacks = scanPacks(presetsFolder());
+        repaint();
+    }
+
+    bool saveWouldReplace() const
+    {
+        for (const UserPreset& u : packPresets(ShapeSet::trim(fSaveText[1])))
+            if (u.name == ShapeSet::trim(fSaveText[0])) return true;
+        return false;
+    }
+
+    void saveUserPreset()
+    {
+        UserPreset u;
+        u.name = ShapeSet::trim(fSaveText[0]);
+        u.pack = ShapeSet::trim(fSaveText[1]);
+        u.author = ShapeSet::trim(fSaveText[2]);
+        if (u.name.empty() || u.pack.empty()) return;
+        u.category = categories()[fSaveCat];
+        for (int p = 0; p < kParamCount; ++p) u.values[p] = fValues[p];
+        for (const CustomShape& c : fSet.customs) u.shapes.push_back({c.xs, c.ys});
+        if (!savePreset(presetsFolder(), u)) {
+            note("COULDN'T SAVE: " + u.file.string());
+            return;
+        }
+        saveSetting("author", u.author);
+        saveSetting("pack", u.pack);
+        fSaveOpen = false;
+        fPacks = scanPacks(presetsFolder());
+        fPresetName = u.name;
+        fPresetPack = u.pack;
+        setState("preset", (fPresetPack + "/" + fPresetName).c_str());
+        note("SAVED " + u.pack + " / " + u.name);
+    }
+
+    void drawSaveForm()
+    {
+        fillBox({0, 0, kTube, kTube}, Color(kBg.red, kBg.green, kBg.blue, 0.97f));
+        outline({6, 6, kTube - 12, kTube - 12}, kDim);
+        label(20, 26, "$ save preset", kFg, 12);
+        static const char* names[3] = {"NAME", "PACK", "AUTHOR"};
+        const bool blink = std::fmod(fBlink, 1.0f) < 0.6f;
+        for (int f = 0; f < 3; ++f) {
+            const Box& r = kSaveField[f];
+            label(r.x - 12, r.y + r.h / 2, names[f], f == fSaveFocus ? kFg : kDim, 11, ALIGN_RIGHT | ALIGN_MIDDLE);
+            outline(r, f == fSaveFocus ? kFg : kDim);
+            const std::string& t = fSaveText[f];
+            if (t.empty() && f == 2) {
+                label(r.x + 10, r.y + r.h / 2 + 0.5f, "(optional)", kFaint, 12);
+            } else if (fSaveFresh[f] && f == fSaveFocus && !t.empty()) {  // selected: typing replaces it
+                fontSize(12);
+                DGL_NAMESPACE::Rectangle<float> sb;
+                textBounds(0, 0, t.c_str(), nullptr, sb);
+                fillBox({r.x + 8, r.y + 4, sb.getWidth() + 4, r.h - 8}, kDim);
+                label(r.x + 10, r.y + r.h / 2 + 0.5f, t.c_str(), kBright, 12);
+            } else {
+                label(r.x + 10, r.y + r.h / 2 + 0.5f, t.c_str(), kBright, 12);
+            }
+            if (f == fSaveFocus && blink && !fSaveFresh[f]) {
+                fontSize(12);
+                DGL_NAMESPACE::Rectangle<float> tb;
+                const float tw = t.empty() ? 0.0f : (textBounds(0, 0, t.c_str(), nullptr, tb), tb.getWidth());
+                fillBox({r.x + 10 + tw + 1, r.y + 5, 7, r.h - 10}, kFg);
+            }
+        }
+        label(kSaveCat.x - 12, kSaveCat.y + kSaveCat.h / 2, "CATEGORY", kDim, 11, ALIGN_RIGHT | ALIGN_MIDDLE);
+        outline(kSaveCat, kDim);
+        label(kSaveCat.x + kSaveCat.w / 2, kSaveCat.y + kSaveCat.h / 2 + 0.5f,
+              ("<  " + categories()[fSaveCat] + "  >").c_str(), kBright, 12, ALIGN_CENTER | ALIGN_MIDDLE);
+        if (saveWouldReplace())
+            label(kTube / 2, 276, "replaces the one with that name in that pack", kSrcCol[kSrcEnv], 10, ALIGN_CENTER | ALIGN_MIDDLE);
+        const bool ready = !ShapeSet::trim(fSaveText[0]).empty() && !ShapeSet::trim(fSaveText[1]).empty();
+        button(kSaveOk, "[ SAVE ]", ready ? kFg : kDim);
+        button(kSaveCancel, "[ CANCEL ]", kDim);
+        label(kTube / 2, 360, ("into " + presetsFolder().string()).c_str(), kFaint, 9, ALIGN_CENTER | ALIGN_MIDDLE);
+    }
+
+    // ---- import / export / the folder
+    enum { kBrowseNone, kBrowseImport, kBrowseExport };
+    int fBrowse = kBrowseNone;
+    std::string fExportPack;
+
+    void uiFileBrowserSelected(const char* filename) override
+    {
+        const int mode = fBrowse;
+        fBrowse = kBrowseNone;
+        if (!filename || !*filename) return;
+        std::error_code ec;
+        std::filesystem::create_directories(presetsFolder(), ec);
+        if (mode == kBrowseImport) {
+            const int n = importFile(presetsFolder(), std::filesystem::u8path(filename));
+            fPacks = scanPacks(presetsFolder());
+            note(n ? "IMPORTED " + std::to_string(n) + (n == 1 ? " PRESET" : " PRESETS") : "NO PRESETS IN THAT FILE");
+        } else if (mode == kBrowseExport) {
+            std::filesystem::path f = std::filesystem::u8path(filename);
+            if (f.extension() != ".sspack") f += ".sspack";
+            note(exportPack(presetsFolder(), fExportPack, f) ? "EXPORTED " + fExportPack : "COULDN'T WRITE " + f.string());
+        }
+    }
+
+    void browse(int mode, const std::string& defaultName)
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(presetsFolder(), ec);
+        static std::string start, name;  // kept alive while the dialog is up
+        start = presetsFolder().string();
+        name = defaultName;
+        FileBrowserOptions opts;
+        opts.saving = mode == kBrowseExport;
+        opts.startDir = start.c_str();
+        opts.defaultName = mode == kBrowseExport ? name.c_str() : nullptr;
+        opts.title = mode == kBrowseExport ? "Export a Scope Synth pack (.sspack)" : "Import Scope Synth presets (.ssp or .sspack)";
+        fBrowse = mode;
+        if (!openFileBrowser(opts)) fBrowse = kBrowseNone;
+    }
+
+    void openFolder()
+    {
+        const std::filesystem::path dir = presetsFolder();
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+#ifdef _WIN32
+        ShellExecuteW(nullptr, L"open", dir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#elif defined(__APPLE__)
+        std::system(("open \"" + dir.string() + "\" &").c_str());
+#else
+        std::system(("xdg-open \"" + dir.string() + "\" >/dev/null 2>&1 &").c_str());
+#endif
     }
 
     // clicks on the menu bar or an open menu (wy: from the top of the window)
@@ -603,20 +923,51 @@ private:
             bool right;
             const int r = menuRow(x, wy, right);
             repaint();
-            if (r < 0 || button != 1) {  // a click outside closes it
+            if (r < 0) {  // a click outside closes it
                 fMenu = kNoMenu;
+                fDeleteArm = -1;
                 return true;
             }
-            const auto cats = categories();
-            const auto list = presetsIn(fMenuCat);
-            if (!right && r == 0) {
-                loadPreset(0);  // INIT
+            const auto items = leftItems();
+            if (!right) {
+                fDeleteArm = -1;
+                if (button != kMouseButtonLeft || r >= (int)items.size()) return true;
+                switch (items[r].kind) {
+                case kRowInit: loadPreset(0); fMenu = kNoMenu; break;
+                case kRowCat: case kRowPack: fMenuCat = items[r].text; fMenuIsPack = items[r].kind == kRowPack; break;
+                case kRowImport: fMenu = kNoMenu; browse(kBrowseImport, ""); break;
+                case kRowFolder: fMenu = kNoMenu; openFolder(); break;
+                default: break;
+                }
+                return true;
+            }
+            if (!fMenuIsPack) {
+                const auto list = presetsIn(fMenuCat);
+                if (button == kMouseButtonLeft && r < (int)list.size()) {
+                    loadPreset(list[r]);
+                    fMenu = kNoMenu;
+                }
+                return true;
+            }
+            const auto list = packPresets(fMenuCat);  // a copy: deleting changes the list
+            if (r == (int)list.size() && button == kMouseButtonLeft) {  // EXPORT PACK
+                fExportPack = fMenuCat;
                 fMenu = kNoMenu;
-            } else if (!right && r <= (int)cats.size()) {
-                fMenuCat = cats[r - 1];
-            } else if (right && r < (int)list.size()) {
-                loadPreset(list[r]);
-                fMenu = kNoMenu;
+                browse(kBrowseExport, fileName(fMenuCat) + ".sspack");
+            } else if (r < (int)list.size()) {
+                if (button == kMouseButtonRight) {
+                    fDeleteArm = fDeleteArm == r ? -1 : r;  // right-click: ask; again: never mind
+                } else if (button == kMouseButtonLeft && fDeleteArm == r) {
+                    std::error_code ec;
+                    std::filesystem::remove(list[r].file, ec);
+                    note("DELETED " + list[r].pack + " / " + list[r].name);
+                    fDeleteArm = -1;
+                    fPacks = scanPacks(presetsFolder());
+                    if (fPacks.presets.find(fMenuCat) == fPacks.presets.end()) { fMenuCat = categories().front(); fMenuIsPack = false; }
+                } else if (button == kMouseButtonLeft) {
+                    loadUser(list[r]);
+                    fMenu = kNoMenu;
+                }
             }
             return true;
         }
@@ -625,19 +976,23 @@ private:
             fMenu = kNoMenu;
             repaint();
             const int r = (int)((wy - b.y - 4) / kMenuRow) - 1;  // row 0 is the title
-            if (b.has(x, wy) && button == 1 && r >= 0 && r < kNumThemes) {
+            if (b.has(x, wy) && button == kMouseButtonLeft && r >= 0 && r < kNumThemes) {
                 applyTheme(r);
                 saveTheme(r);
             }
             return true;
         }
-        if (wy >= kTop || button != 1) return wy < kTop;
-        if (kPresetPrev.has(x, wy) || kPresetNext.has(x, wy)) loadPreset(std::max(presetIndex(), 0) + (kPresetNext.has(x, wy) ? 1 : -1));
+        if (wy >= kTop || button != kMouseButtonLeft) return wy < kTop;
+        if (kPresetPrev.has(x, wy) || kPresetNext.has(x, wy)) stepPreset(kPresetNext.has(x, wy) ? 1 : -1);
         else if (kPresetName.has(x, wy)) {
             fMenu = kPresetMenu;
+            fDeleteArm = -1;
+            fPacks = scanPacks(presetsFolder());
             const int cur = presetIndex();
-            fMenuCat = cur > 0 ? presets()[cur].category : categories().front();
+            fMenuIsPack = !fPresetPack.empty() && fPacks.presets.count(fPresetPack);
+            fMenuCat = fMenuIsPack ? fPresetPack : cur > 0 ? presets()[cur].category : categories().front();
         }
+        else if (kSaveButton.has(x, wy)) openSaveForm();
         else if (kGear.has(x, wy)) fMenu = kThemeMenu;
         repaint();
         return true;
@@ -647,15 +1002,22 @@ private:
     {
         fillBox({0, 0, kW, kTop}, kBg);
         fillBox({0, kTop - 1, kW, 1}, kDim);
-        label(12, kTop / 2, "scope-synth", kFg, 12);
+        drawLogo(10, 1.5f, 2.4f, 4.2f);
         button(kPresetPrev, "<", kFg);
         button(kPresetNext, ">", kFg);
+        button(kSaveButton, "SAVE", kFg, fSaveOpen);
         outline(kPresetName, fMenu == kPresetMenu ? kFg : kDim);
         const int i = presetIndex();
         std::string name = fPresetName;
-        if (i >= 0 && *presets()[i].category) name = std::string(presets()[i].category) + " / " + name;
+        if (!fPresetPack.empty()) name = fPresetPack + " / " + name;
+        else if (i >= 0 && *presets()[i].category) name = std::string(presets()[i].category) + " / " + name;
+        save();
+        intersectScissor(kPresetName.x + 2, kPresetName.y, kPresetName.w - 22, kPresetName.h);
         label(kPresetName.x + 10, kPresetName.y + kPresetName.h / 2 + 0.5f, name.c_str(), kBright, 11);
+        restore();
         label(kPresetName.x + kPresetName.w - 10, kPresetName.y + kPresetName.h / 2 + 0.5f, "v", kDim, 10, ALIGN_RIGHT | ALIGN_MIDDLE);
+        if (fBlink < fToastUntil)
+            label(kGear.x - 12, kTop / 2, fToast.c_str(), kBright, 10, ALIGN_RIGHT | ALIGN_MIDDLE);
         // the settings gear
         const float cx = kGear.x + kGear.w / 2, cy = kGear.y + kGear.h / 2;
         const Color& gc = fMenu == kThemeMenu ? kBright : kFg;
@@ -678,6 +1040,31 @@ private:
         fill();
     }
 
+    // the block-letter logo: a cell per character, w x h each. Full blocks are
+    // solid in the theme colour; the box-drawing shadow is thin dim lines.
+    void drawLogo(float x0, float y0, float w, float h)
+    {
+        for (int r = 0; r < 6; ++r) {
+            const char* p = kLogo[r];
+            for (int c = 0; *p; ++c) {
+                // one UTF-8 character: block and box-drawing ones are 3 bytes (E2 xx xx), spaces 1
+                uint32_t cp = (unsigned char)*p;
+                if (cp >= 0xE0) { cp = (cp & 0x0F) << 12 | (p[1] & 0x3F) << 6 | (p[2] & 0x3F); p += 3; }
+                else ++p;
+                const float x = x0 + c * w, y = y0 + r * h, mx = x + w / 2, my = y + h / 2, t = std::max(w * 0.4f, 0.8f);
+                if (cp == 0x2588) { fillBox({x, y, w + 0.05f, h + 0.05f}, kFg); continue; }
+                const bool left = cp == 0x2550 || cp == 0x2557 || cp == 0x255D;    // the line goes out to the left
+                const bool right = cp == 0x2550 || cp == 0x2554 || cp == 0x255A;   // ... right
+                const bool up = cp == 0x2551 || cp == 0x255D || cp == 0x255A;      // ... up
+                const bool down = cp == 0x2551 || cp == 0x2557 || cp == 0x2554;    // ... down
+                if (left) fillBox({x, my - t / 2, w / 2 + t / 2, t}, kDim);
+                if (right) fillBox({mx - t / 2, my - t / 2, w / 2 + t / 2, t}, kDim);
+                if (up) fillBox({mx - t / 2, y, t, h / 2 + t / 2}, kDim);
+                if (down) fillBox({mx - t / 2, my - t / 2, t, h / 2 + t / 2}, kDim);
+            }
+        }
+    }
+
     void drawMenus()
     {
         const float my = fMouseY + kTop;
@@ -686,23 +1073,45 @@ private:
             fillBox(b, kBg);
             outline(b, kFg);
             fillBox({b.x + kCatW, b.y + 4, 1, b.h - 8}, kDim);
-            const int cur = presetIndex();
-            auto row = [&](float x, float w, int r, const char* text, bool lit, bool marked) {
+            const int cur = presetIndex(), curUser = userIndex();
+            auto row = [&](float x, float w, int r, const std::string& text, bool lit, bool marked, const Color& col) {
                 const Box rb = {x, b.y + 4 + r * kMenuRow, w, kMenuRow};
                 const bool hot = rb.has(fMouseX, my);
-                if (hot || lit) fillBox(rb, hot ? kFg : kFaint);
-                label(rb.x + 20, rb.y + rb.h / 2, text, hot ? kBg : marked ? kBright : kFg, 11);
+                if (hot || lit) fillBox(rb, hot ? col : kFaint);
+                label(rb.x + 20, rb.y + rb.h / 2, text.c_str(), hot ? kBg : marked ? kBright : col, 11);
                 if (marked) label(rb.x + 8, rb.y + rb.h / 2, ">", hot ? kBg : kBright, 11);
             };
-            row(b.x + 2, kCatW - 4, 0, "INIT", false, cur == 0);
-            const auto cats = categories();
-            for (size_t c = 0; c < cats.size(); ++c) {
-                const bool here = cur > 0 && cats[c] == presets()[cur].category;
-                row(b.x + 2, kCatW - 4, (int)c + 1, cats[c].c_str(), cats[c] == fMenuCat, here);
+            const auto items = leftItems();
+            for (int r = 0; r < (int)items.size(); ++r) {
+                const Item& it = items[r];
+                if (it.kind == kRowHeader) {
+                    label(b.x + 10, b.y + 4 + r * kMenuRow + kMenuRow / 2, it.text.c_str(), kDim, 10);
+                    continue;
+                }
+                const bool selected = (it.kind == kRowCat || it.kind == kRowPack) && it.text == fMenuCat && fMenuIsPack == (it.kind == kRowPack);
+                const bool here = (it.kind == kRowInit && cur == 0) || (it.kind == kRowCat && cur > 0 && it.text == presets()[cur].category)
+                               || (it.kind == kRowPack && it.text == fPresetPack);
+                const bool action = it.kind == kRowImport || it.kind == kRowFolder;
+                row(b.x + 2, kCatW - 4, r, it.text, selected, here, action ? kSrcCol[kSrcEnv] : kFg);
             }
-            const auto list = presetsIn(fMenuCat);
-            for (size_t i = 0; i < list.size(); ++i)
-                row(b.x + kCatW + 2, b.w - kCatW - 4, (int)i, presets()[list[i]].name, false, list[i] == cur);
+            const float rx = b.x + kCatW + 2, rw = b.w - kCatW - 4;
+            if (!fMenuIsPack) {
+                const auto list = presetsIn(fMenuCat);
+                for (size_t i = 0; i < list.size(); ++i)
+                    row(rx, rw, (int)i, presets()[list[i]].name, false, list[i] == cur, kFg);
+            } else {
+                const auto& list = packPresets(fMenuCat);
+                for (size_t i = 0; i < list.size(); ++i) {
+                    if ((int)i == fDeleteArm) {
+                        row(rx, rw, (int)i, "DELETE " + list[i].name + "? CLICK", true, false, kErr);
+                        continue;
+                    }
+                    const bool marked = fMenuCat == fPresetPack && (int)i == curUser;
+                    row(rx, rw, (int)i, list[i].name, false, marked, kFg);
+                    label(rx + rw - 8, b.y + 4 + i * kMenuRow + kMenuRow / 2, list[i].category.c_str(), kDim, 9, ALIGN_RIGHT | ALIGN_MIDDLE);
+                }
+                row(rx, rw, (int)list.size(), "EXPORT PACK...", false, false, kSrcCol[kSrcEnv]);
+            }
         } else if (fMenu == kThemeMenu) {
             const Box b = themeMenuBox();
             fillBox(b, kBg);
@@ -740,16 +1149,16 @@ private:
 
     bool lfoTitleClick(int button, float x, float y)
     {
-        if (kSyncBox.has(x, y)) { if (button == 1) setValue(kLfoSync, fValues[kLfoSync] > 0.5f ? 0.0f : 1.0f, true); return true; }
-        if (kDrawBox.has(x, y)) { if (button == 1) setValue(kLfoDraw, fValues[kLfoDraw] > 0.5f ? 0.0f : 1.0f, true); return true; }
+        if (kSyncBox.has(x, y)) { if (button == kMouseButtonLeft) setValue(kLfoSync, fValues[kLfoSync] > 0.5f ? 0.0f : 1.0f, true); return true; }
+        if (kDrawBox.has(x, y)) { if (button == kMouseButtonLeft) setValue(kLfoDraw, fValues[kLfoDraw] > 0.5f ? 0.0f : 1.0f, true); return true; }
         if (fValues[kLfoDraw] > 0.5f && kStepsBox.has(x, y)) {  // STEPS < n >: left half fewer, right half more
             const float dir = x < kStepsBox.x + kStepsBox.w / 2 ? -1.0f : 1.0f;
             setValue(kLfoSteps, std::clamp(std::round(fValues[kLfoSteps]) + dir, 1.0f, 16.0f), true);
             return true;
         }
         if (fValues[kLfoDraw] > 0.5f && kLfoGraph.has(x, y)) {
-            fDrawing = button == 1;
-            drawStep(x, y, button == 3);
+            fDrawing = button == kMouseButtonLeft;
+            drawStep(x, y, button == kMouseButtonRight);
             return true;
         }
         return false;
@@ -808,25 +1217,25 @@ private:
             sel = std::min(sel, n - 1);
             if (barPrev(o).has(x, y) || barNext(o).has(x, y) || barName(o).has(x, y)) {
                 // < back, > next; on the name: click next, right-click back
-                const bool back = barPrev(o).has(x, y) || (barName(o).has(x, y) && button == 3);
+                const bool back = barPrev(o).has(x, y) || (barName(o).has(x, y) && button == kMouseButtonRight);
                 setValue(slotParam(o, sel), (float)((slotId(o, sel) + (back ? -1 : 1) + total) % total), true);
                 return true;
             }
             for (int i = 0; i < n; ++i)
                 if (barChip(o, i).has(x, y)) {
-                    if (button == 3 && n > 1) {  // right-click: take the slot out, the ones after move down
+                    if (button == kMouseButtonRight && n > 1) {  // right-click: take the slot out, the ones after move down
                         for (int j = i; j < n - 1; ++j)
                             setValue(slotParam(o, j), (float)slotId(o, j + 1), true);
                         setValue(slotsParam(o), (float)(n - 1), true);
                         sel = std::min(sel, n - 2);
-                    } else if (button == 1) {
+                    } else if (button == kMouseButtonLeft) {
                         sel = i;
                         repaint();
                     }
                     return true;
                 }
             if (n < kMaxSlots && barChip(o, n).has(x, y)) {  // +: a new slot, the next shape along
-                if (button == 1) {
+                if (button == kMouseButtonLeft) {
                     setValue(slotParam(o, n), (float)((slotId(o, n - 1) + 1) % total), true);
                     setValue(slotsParam(o), (float)(n + 1), true);
                     sel = n;
@@ -834,11 +1243,11 @@ private:
                 return true;
             }
             if (barNew(o).has(x, y)) {
-                if (button == 1) openEditor(o, -1);
+                if (button == kMouseButtonLeft) openEditor(o, -1);
                 return true;
             }
             if (fSet.isCustom(slotId(o, sel)) && barEdit(o).has(x, y)) {
-                if (button == 1) openEditor(o, slotId(o, sel));
+                if (button == kMouseButtonLeft) openEditor(o, slotId(o, sel));
                 return true;
             }
         }
@@ -948,7 +1357,7 @@ private:
         std::snprintf(buf, sizeof(buf), "[ %s ]", title);
         fontSize(11);
         textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
-        Rectangle<float> r;
+        DGL_NAMESPACE::Rectangle<float> r;
         textBounds(0, 0, buf, nullptr, r);
         const float tw = r.getWidth();
         float sw = 0;
@@ -1129,7 +1538,7 @@ private:
             intersectScissor(r.x + 2, r.y, r.w - 4, r.h);
             fontSize(12);
             textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
-            Rectangle<float> tb;
+            DGL_NAMESPACE::Rectangle<float> tb;
             if (!fField[f].empty()) textBounds(0, 0, fField[f].c_str(), nullptr, tb);
             const float tw = fField[f].empty() ? 0.0f : tb.getWidth();
             const float tx = std::min(r.x + 8, r.x + r.w - 16 - tw);  // keep the end in view
@@ -1365,16 +1774,44 @@ private:
         stroke();
     }
 
+    // a chunky pixel screw: a 7x7 square of big pixels in two dark greys with a
+    // plus-shaped slot, turned 45 degrees so it sits as a perfect diamond (the slot an x).
+    // (cx, cy): its middle; px: one pixel's size.
+    void drawScrew(float cx, float cy, float px)
+    {
+        static const char* const art[7] = {
+            "ddddddd",
+            "dfffffd",
+            "dffdffd",
+            "dfdddfd",
+            "dffdffd",
+            "dfffffd",
+            "ddddddd",
+        };
+        save();
+        translate(cx, cy);
+        rotate(0.785398163f);
+        for (int r = 0; r < 7; ++r)
+            for (int c = 0; c < 7; ++c)
+                fillBox({(c - 3.5f) * px, (r - 3.5f) * px, px + 0.05f, px + 0.05f},
+                        art[r][c] == 'f' ? Color(84, 87, 92) : Color(34, 35, 38));  // the face; the rim and slot
+        restore();
+    }
+
     void drawScopeLabels()
     {
+        const float sp = 5, half = 7 * sp * 0.7071f, in = 8;  // diamond screws, about half of each corner outside the tube
+        for (float sx : {in + half, kTube - in - half})
+            for (float sy : {in + half, kTube - in - half})
+                drawScrew(sx, sy, sp);
         static const char* names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
         char buf[64];
         if (fNote >= 0) {
             const float hz = 440.0f * std::exp2((fPitch - 69) / 12);
             std::snprintf(buf, sizeof(buf), "%s%d  %.1f Hz", names[fNote % 12], fNote / 12 - 1, hz);
-            label(14, 16, buf, kFg, 12);
+            label(62, 16, buf, kFg, 12);
             std::snprintf(buf, sizeof(buf), "%d %s", fVoices, fVoices == 1 ? "note" : "notes");
-            label(kTube - 14, 16, buf, kDim, 11, ALIGN_RIGHT | ALIGN_MIDDLE);
+            label(kTube - 62, 16, buf, kDim, 11, ALIGN_RIGHT | ALIGN_MIDDLE);
         }
         label(kTube / 2, kTube - 12, "scope-synth", kDim, 10, ALIGN_CENTER | ALIGN_MIDDLE);
     }
@@ -1435,7 +1872,8 @@ private:
             outline({c.x + 2, c.y + 2, c.w - 4, c.h - 4}, Color(kSrcCol[fLinkSrc].red, kSrcCol[fLinkSrc].green, kSrcCol[fLinkSrc].blue, 0.7f));
         const bool dim = ((p == kAShape || p == kBShape) && slots(p == kBShape) < 2)  // one shape: nothing to morph
                       || (p == kLfoWave && fValues[kLfoDraw] > 0.5f);                 // DRAW replaces the wave
-        label(cx, c.y + 12, info(p).caption, dim ? kFaint : kDim, 9.5f, ALIGN_CENTER | ALIGN_MIDDLE);
+        const std::string caption = p == kSubLevel ? std::string("SUB ") + (fValues[kSubOct] > -1.5f ? "-1" : "-2") : info(p).caption;
+        label(cx, c.y + 12, caption.c_str(), dim ? kFaint : kDim, 9.5f, ALIGN_CENTER | ALIGN_MIDDLE);
         if (kind == kSwitch) {
             const bool on = fValues[p] > 0.5f;
             label(cx, c.y + 38, on ? "[x]" : "[ ]", kFg, 14, ALIGN_CENTER | ALIGN_MIDDLE);

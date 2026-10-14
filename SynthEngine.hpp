@@ -227,6 +227,9 @@ private:
         double ph[2][kMaxUnison] = {};
         float lv[2] = {0, 0}, cs[2] = {1, 1}, sn[2] = {0, 0};  // last level and rotation, ramped from
         float f1[2][2] = {}, f2[2][2] = {};  // filter state: [stage][x, y] (two stages for LP24)
+        double subPh = 0;                    // SUB: a circle one or two octaves down
+        float subLv = 0, noiseLv = 0;        // their last levels, ramped from
+        uint32_t noise = 22222;              // NOISE: each note its own
     };
 
     const float* P;
@@ -293,6 +296,8 @@ private:
         v.lv[0] = v.lv[1] = 0;
         v.cs[0] = v.cs[1] = 1;
         v.sn[0] = v.sn[1] = 0;
+        v.subPh = 0;
+        v.subLv = v.noiseLv = 0;
         std::memset(v.f1, 0, sizeof(v.f1));
         std::memset(v.f2, 0, sizeof(v.f2));
     }
@@ -426,6 +431,12 @@ private:
                 sn[o] = std::sin(rot);
             }
 
+            // SUB and NOISE: levels as the links set them now
+            const float subLv = std::max(modulated(kSubLevel, env, lfoVal), 0.0f) * vol * 0.8f;
+            const float noiseLv = std::max(modulated(kNoiseLevel, env, lfoVal), 0.0f) * vol * 0.5f;
+            const float subInc = std::min(440.0f * std::exp2((v.pitch + bend - 69) / 12 + std::lround(P[kSubOct])) / sr, 0.45f);
+            if (v.noise == 22222) v.noise = (uint32_t)(v.order * 2654435761u) | 1;
+
             // the filter for this note: cutoff and resonance as the links set them now
             const int ftype = std::clamp((int)std::lround(P[kFilterType]), 0, 4);
             const float cutoff = std::min(modulated(kCutoff, env, lfoVal), 0.45f * sr);
@@ -468,6 +479,20 @@ private:
                     sx += (x * c - y * s) * level;
                     sy += (x * s + y * c) * level;
                 }
+                const float sl = v.subLv + (subLv - v.subLv) * k, nl = v.noiseLv + (noiseLv - v.noiseLv) * k;
+                v.subPh += subInc;
+                if (v.subPh >= 1) v.subPh -= 1;
+                if (sl > 0) {
+                    const float a = (float)(6.283185307179586 * v.subPh);
+                    sx += std::sin(a) * sl;
+                    sy += std::cos(a) * sl;
+                }
+                if (nl > 0) {
+                    v.noise = v.noise * 1664525u + 1013904223u;
+                    sx += ((v.noise >> 9) / 4194304.0f - 1) * nl;
+                    v.noise = v.noise * 1664525u + 1013904223u;
+                    sy += ((v.noise >> 9) / 4194304.0f - 1) * nl;
+                }
                 {
                     float* in[2] = {&sx, &sy};
                     for (int ch = 0; ch < 2; ++ch) {
@@ -497,6 +522,8 @@ private:
                 v.cs[o] = cs[o];
                 v.sn[o] = sn[o];
             }
+            v.subLv = subLv;
+            v.noiseLv = noiseLv;
             if (v.stage == 2 && v.env < 1e-5f) v.active = false;
         }
 

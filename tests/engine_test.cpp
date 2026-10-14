@@ -1,6 +1,7 @@
 // Checks the sound engine on its own: g++ -std=c++17 -O2 -I. tests/engine_test.cpp -o engine_test && ./engine_test
 #include "SynthEngine.hpp"
 #include "Presets.hpp"
+#include "PresetFiles.hpp"
 #include <chrono>
 #include <cstdio>
 #include <vector>
@@ -393,6 +394,66 @@ int main()
         EXPECT(!quiet && !badShapes && !dupes && !stuck && !loud,
                "%zu presets: all play and ring out (%d too quiet, %d too loud, %d with bad shapes, %d the same, %d stuck)",
                presets().size(), quiet, loud, badShapes, dupes, stuck);
+    }
+    {
+        // SUB: a circle an octave (or two) under the note; NOISE: everywhere between the harmonics
+        auto power = [&](const std::vector<float>& x, float f) {
+            const double w = 2 * M_PI * f / sr, c = 2 * std::cos(w);
+            double s1 = 0, s2 = 0;
+            for (int i = 4800; i < 4800 + 19200; ++i) { const double s0 = x[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+            return s1 * s1 + s2 * s2 - c * s1 * s2;
+        };
+        auto play = [&](std::vector<float>& r) { Engine e(P); e.setSampleRate(sr); e.noteOn(57, 127); return run(e, 24000, &r); };
+        defaults();
+        std::vector<float> r;
+        auto plain = play(r);
+        P[kSubLevel] = 0.8f;
+        auto sub1 = play(r);
+        P[kSubOct] = -2;
+        auto sub2 = play(r);
+        EXPECT(power(sub1, 110) > 100 * power(plain, 110) && power(sub2, 55) > 100 * power(plain, 55),
+               "SUB adds 110 Hz (-1 oct) and 55 Hz (-2) under A3");
+        defaults();
+        P[kNoiseLevel] = 0.8f;
+        auto noisy = play(r);
+        EXPECT(power(noisy, 1234.5f) > 8 * power(plain, 1234.5f) && peak(noisy) <= 1.0f, "NOISE fills in between the harmonics (%.3g vs %.3g)", power(noisy, 1234.5f), power(plain, 1234.5f));
+    }
+    {
+        // preset files: every factory preset to text and back, unchanged
+        int changed = 0;
+        for (const Preset& f : presets()) {
+            UserPreset u = fromFactory(f);
+            u.pack = "TEST PACK";
+            const auto back = parsePresets(fileText(u), "X");
+            bool same = back.size() == 1 && back[0].name == u.name && back[0].category == u.category && back[0].pack == "TEST PACK"
+                     && back[0].shapes == u.shapes;
+            for (int p = 0; same && p < kParamCount; ++p) same = back[0].values[p] == u.values[p];
+            if (!same) { ++changed; std::printf("  %s came back different\n", f.name); }
+        }
+        EXPECT(!changed, "all %zu factory presets saved as text and read back the same", presets().size());
+        // a pack: save three, find them, export the pack, import it somewhere else
+        const fs::path a = fs::temp_directory_path() / "scopesynth-test-a", b = fs::temp_directory_path() / "scopesynth-test-b";
+        fs::remove_all(a); fs::remove_all(b);
+        for (int i : {1, 40, 120}) { UserPreset u = fromFactory(presets()[i]); u.pack = "MY PACK"; u.author = "me"; savePreset(a, u); }
+        UserPreset odd; odd.name = "WHAT/IS:THIS?"; odd.pack = "OTHER"; savePreset(a, odd);  // a name that can't be a file name as is
+        const Packs pa = scanPacks(a);
+        const fs::path pack = fs::temp_directory_path() / "scopesynth-test.sspack";
+        const bool exported = exportPack(a, "MY PACK", pack);
+        const int imported = importFile(b, pack);
+        const Packs pb = scanPacks(b);
+        bool same = pb.names.size() == 1 && pb.names[0] == "MY PACK" && pb.presets.at("MY PACK").size() == 3;
+        for (int i = 0; same && i < 3; ++i) {
+            const UserPreset &x = pa.presets.at("MY PACK")[i], &y = pb.presets.at("MY PACK")[i];
+            same = x.name == y.name && x.author == "me" && y.author == "me" && x.shapes == y.shapes;
+            for (int p = 0; same && p < kParamCount; ++p) same = x.values[p] == y.values[p];
+        }
+        EXPECT(pa.names.size() == 2 && pa.presets.at("OTHER")[0].name == "WHAT/IS:THIS?" && exported && imported == 3 && same,
+               "pack: saved 3 + 1, found %zu packs, exported, imported %d into another folder, all the same", pa.names.size(), imported);
+        // something written by hand or by a later version: unknown lines skipped, missing settings stay default
+        const auto hand = parsePresets("name: hand made\nparam cutoff 800\nparam from_the_future 3\nshape sin(t) | cos(t)\nwhat is this\n", "LOOSE");
+        EXPECT(hand.size() == 1 && hand[0].name == "HAND MADE" && hand[0].pack == "LOOSE" && hand[0].values[kCutoff] == 800
+               && hand[0].values[kRes] == paramDefault(kRes) && hand[0].shapes.size() == 1, "a hand-written file reads sensibly");
+        fs::remove_all(a); fs::remove_all(b); fs::remove(pack);
     }
     std::printf(fails ? "%d FAILED\n" : "ALL OK\n", fails);
     return fails != 0;

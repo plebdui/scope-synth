@@ -56,7 +56,7 @@ void ScopeSynthPlugin::initParameter(uint32_t index, Parameter& p)
     int src, d;
     if (modOf((int)index, src, d)) {  // ENV / LFO link amounts
         p.name = String(src == kSrcEnv ? "ENV > " : "LFO > ") + kInfo[kDests[d]].name;
-        p.symbol = String(src == kSrcEnv ? "env_" : "lfo_") + kInfo[kDests[d]].symbol;
+        p.symbol = paramSymbol((int)index).c_str();
         return;
     }
     const ParamInfo& in = kInfo[index];

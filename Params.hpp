@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace ss {
 
@@ -22,24 +23,33 @@ enum Param {
     kModBase = kBSlot0 + kMaxSlots,                      // then ENV -> each of the first 12 destinations, then LFO -> each
     kFilterType = kModBase + 2 * 12, kCutoff, kRes,      // added in 1.1 (after the 1.0 ones, so 1.0 projects still load)
     kLfoSync, kLfoDiv, kLfoDraw, kLfoSteps, kLfoStep0,   // LFO: tempo sync, and DRAW mode's steps
-    kModBase2 = kLfoStep0 + 16,                                           // ENV, LFO -> each destination added since 1.0, a pair each
+    kModBase2 = kLfoStep0 + 16,                          // ENV, LFO -> cutoff and resonance, a pair each
+    kSubLevel = kModBase2 + 4, kSubOct, kNoiseLevel,     // added in 1.2: SUB and NOISE
+    kModBase3,                                           // ENV, LFO -> sub and noise level, a pair each
 };
 
 // knobs the ENV and LFO can be linked to
 static const int kDests[] = {kAShape, kASemi, kAFine, kARot, kALevel,
                              kBShape, kBSemi, kBFine, kBRot, kBLevel, kLfoRate, kVolume,
-                             kCutoff, kRes};
-static constexpr int kNumDests = sizeof(kDests) / sizeof(kDests[0]), kDests1 = 12;
+                             kCutoff, kRes,
+                             kSubLevel, kNoiseLevel};
+static constexpr int kNumDests = sizeof(kDests) / sizeof(kDests[0]), kDests1 = 12, kDests2 = 14;
 enum Source { kSrcEnv = 0, kSrcLfo = 1, kNumSources = 2 };
-static constexpr int kParamCount = kModBase2 + kNumSources * (kNumDests - kDests1);
+static constexpr int kParamCount = kModBase3 + kNumSources * (kNumDests - kDests2);
 
 // the parameter holding how much `src` moves destination number `d` (-1..1 of the knob's travel)
-inline int modParam(int src, int d) { return d < kDests1 ? kModBase + src * kDests1 + d : kModBase2 + (d - kDests1) * 2 + src; }
+inline int modParam(int src, int d)
+{
+    if (d < kDests1) return kModBase + src * kDests1 + d;
+    if (d < kDests2) return kModBase2 + (d - kDests1) * 2 + src;
+    return kModBase3 + (d - kDests2) * 2 + src;
+}
 // the other way: is p a link amount, and which
 inline bool modOf(int p, int& src, int& d)
 {
     if (p >= kModBase && p < kFilterType) { src = (p - kModBase) / kDests1; d = (p - kModBase) % kDests1; return true; }
-    if (p >= kModBase2 && p < kParamCount) { src = (p - kModBase2) % 2; d = kDests1 + (p - kModBase2) / 2; return true; }
+    if (p >= kModBase2 && p < kSubLevel) { src = (p - kModBase2) % 2; d = kDests1 + (p - kModBase2) / 2; return true; }
+    if (p >= kModBase3 && p < kParamCount) { src = (p - kModBase3) % 2; d = kDests2 + (p - kModBase3) / 2; return true; }
     return false;
 }
 inline bool isMod(int p) { int s, d; return modOf(p, s, d); }
@@ -64,7 +74,7 @@ struct ParamInfo {
     Kind kind;
 };
 
-static const ParamInfo kInfo[kModBase2] = {
+static const ParamInfo kInfo[kModBase3] = {
     {"A Morph", "a_morph", "MORPH", "%", 0, 1, 0, kLin, kKnob},
     {"A Octave", "a_oct", "OCT", "", -3, 3, 0, kLin, kInt},
     {"A Semi", "a_semi", "SEMI", "st", -12, 12, 0, kLin, kInt},
@@ -135,6 +145,11 @@ static const ParamInfo kInfo[kModBase2] = {
     {"LFO Step 14", "lfo_step14", "STEP", "", -1, 1, 0, kLin, kKnob},
     {"LFO Step 15", "lfo_step15", "STEP", "", -1, 1, 0, kLin, kKnob},
     {"LFO Step 16", "lfo_step16", "STEP", "", -1, 1, 0, kLin, kKnob},
+    {"", "", "", "", -1, 1, 0, kLin, kKnob}, {"", "", "", "", -1, 1, 0, kLin, kKnob},  // ENV / LFO -> cutoff, resonance
+    {"", "", "", "", -1, 1, 0, kLin, kKnob}, {"", "", "", "", -1, 1, 0, kLin, kKnob},
+    {"Sub Level", "sub_level", "SUB", "%", 0, 1, 0, kLin, kKnob},
+    {"Sub Octave", "sub_oct", "SUB OCT", "", -2, -1, -1, kLin, kInt},
+    {"Noise Level", "noise_level", "NOISE", "%", 0, 1, 0, kLin, kKnob},
 };
 
 static const char* const kLfoWaves[5] = {"SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"};
@@ -147,7 +162,7 @@ static const double kDivBeats[12] = {4, 2, 1, 0.5, 0.25, 0.125, 2.0 / 3, 1.0 / 3
 inline const ParamInfo& info(int p)
 {
     static const ParamInfo mod = {"", "", "", "", -1, 1, 0, kLin, kKnob};
-    return isMod(p) || p < 0 || p >= kModBase2 ? mod : kInfo[p];
+    return isMod(p) || p < 0 || p >= kModBase3 ? mod : kInfo[p];
 }
 
 // an oscillator's shape list, read from the parameters
@@ -157,6 +172,14 @@ inline int slotCount(const float* P, int o) { return std::clamp((int)std::lround
 inline int slotShape(const float* P, int o, int i, int shapes)  // shapes: how many exist right now
 {
     return std::clamp((int)std::lround(P[slotParam(o, i)]), 0, shapes - 1);
+}
+
+// the name a parameter is saved under (preset files, hosts): stays the same across versions
+inline std::string paramSymbol(int p)
+{
+    int src, d;
+    if (modOf(p, src, d)) return std::string(src == kSrcEnv ? "env_" : "lfo_") + kInfo[kDests[d]].symbol;
+    return info(p).symbol;
 }
 
 inline float paramMin(int p) { return info(p).min; }

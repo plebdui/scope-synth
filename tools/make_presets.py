@@ -7,10 +7,10 @@ Shapes: 0 ROSE, 1 HEART, 2 BUTTERFLY, 3 SPIROGRAPH, 4 LISSAJOUS KNOT, 5 INFINITY
 10 ROTATING CUBE; 'c0', 'c1' = the preset's own typed shapes (cust).
 Keys: a/b = shape list; am bm = MORPH; aoct asemi afine arot alev avoi (and b...);
 atk dec sus rel; lrate lwave (0 sine 1 tri 2 saw 3 square 4 random); poly leg glide vol;
-ft (0 LP12 1 LP24 2 HP 3 BP 4 NOTCH) cut res; sync div (0 1/1 .. 4 1/16, 5 1/32,
+ft (0 LP12 1 LP24 2 HP 3 BP 4 NOTCH) cut res; sub suboct (-1/-2) noise; sync div (0 1/1 .. 4 1/16, 5 1/32,
 6 1/4T 7 1/8T 8 1/16T 9 1/4. 10 1/8. 11 1/16.); draw steps st (semitones);
 env / lfo = {destination: amount} (destinations: am asemi afine arot alev bm bsemi
-bfine brot blev lrate vol cut res)."""
+bfine brot blev lrate vol cut res sub noise)."""
 import os
 
 SAW = ("(t - pi)/pi", "0.3sin(t)")
@@ -28,13 +28,13 @@ def p(cat, name, cust=(), **k):
     P.append((cat, name, list(cust), k))
 
 # ---------------- BASS
-p("BASS", "SUB SCOPE", a=[5], aoct=-1, cut=600, res=0.2, atk=0.002, dec=0.3, sus=0.8, rel=0.12, poly=0, leg=1, glide=0.05, vol=0.75)
+p("BASS", "SUB SCOPE", a=[5], aoct=-1, cut=600, res=0.2, atk=0.002, dec=0.3, sus=0.8, rel=0.12, poly=0, leg=1, glide=0.05, vol=0.75, sub=0.6)
 p("BASS", "CUBE GROWL", a=[10], aoct=-1, avoi=3, b=[3], boct=-2, blev=0.5, ft=1, cut=300, res=0.45, env={"cut": 0.55}, atk=0.001, dec=0.35, sus=0.3, rel=0.15, poly=0)
-p("BASS", "SAW BASS", [SAW], a=["c0"], aoct=-1, ft=1, cut=900, res=0.3, env={"cut": 0.35}, atk=0.001, dec=0.25, sus=0.6, rel=0.1, poly=0, vol=0.7)
-p("BASS", "REESE", a=[5], aoct=-1, avoi=6, b=[4], boct=-1, bfine=12, blev=0.6, ft=1, cut=700, res=0.2, lrate=0.3, lfo={"cut": 0.1}, atk=0.005, sus=0.9, rel=0.2, poly=0, leg=1, glide=0.03, vol=0.65)
-p("BASS", "WOBBLE", a=[10], aoct=-1, avoi=3, ft=1, cut=250, res=0.55, sync=1, div=3, lfo={"cut": 0.55}, sus=1, rel=0.1, poly=0)
+p("BASS", "SAW BASS", [SAW], a=["c0"], aoct=-1, ft=1, cut=900, res=0.3, env={"cut": 0.35}, atk=0.001, dec=0.25, sus=0.6, rel=0.1, poly=0, vol=0.7, sub=0.4)
+p("BASS", "REESE", a=[5], aoct=-1, avoi=6, b=[4], boct=-1, bfine=12, blev=0.6, ft=1, cut=700, res=0.2, lrate=0.3, lfo={"cut": 0.1}, atk=0.005, sus=0.9, rel=0.2, poly=0, leg=1, glide=0.03, vol=0.65, sub=0.4)
+p("BASS", "WOBBLE", a=[10], aoct=-1, avoi=3, ft=1, cut=250, res=0.55, sync=1, div=3, lfo={"cut": 0.55}, sus=1, rel=0.1, poly=0, sub=0.5)
 p("BASS", "ACID SQUELCH", [SQUARE], a=["c0"], aoct=-1, ft=1, cut=250, res=0.85, env={"cut": 0.5}, dec=0.18, sus=0.2, rel=0.08, poly=0, leg=1, glide=0.07, vol=0.6)
-p("BASS", "KNOT DUB", a=[4], aoct=-1, b=[5], boct=-2, blev=0.5, cut=400, res=0.3, sync=1, div=6, lfo={"cut": 0.3}, sus=0.9, poly=0)
+p("BASS", "KNOT DUB", a=[4], aoct=-1, b=[5], boct=-2, blev=0.5, cut=400, res=0.3, sync=1, div=6, lfo={"cut": 0.3}, sus=0.9, poly=0, sub=0.5, suboct=-2)
 p("BASS", "PLUCK BASS", a=[3], aoct=-1, ft=1, cut=300, res=0.4, env={"cut": 0.45}, atk=0.001, dec=0.2, sus=0, rel=0.15)
 p("BASS", "MORPH BASS", a=[5, 10], aoct=-1, env={"am": 1.0}, sus=0.7, cut=2000, poly=0)
 p("BASS", "HEART THUMP", a=[9], aoct=-1, env={"asemi": 0.25}, dec=0.3, sus=0.5, cut=1200, poly=0)
@@ -69,7 +69,7 @@ p("SYNTH", "DRIFTER", a=[8], avoi=3, b=[9], blev=0.4, lrate=1.5, lwave=4, lfo={"
 # ---------------- PLUCK
 p("PLUCK", "GLASS PLUCK", a=[0], b=[4], bsemi=12, blev=0.4, cut=600, res=0.35, env={"cut": 0.6}, atk=0.001, dec=0.25, sus=0, rel=0.25)
 p("PLUCK", "WIRE PLUCK", a=[10], avoi=2, ft=1, cut=1500, env={"cut": 0.4}, atk=0.001, dec=0.15, sus=0, rel=0.15)
-p("PLUCK", "KOTO", a=[0], b=[4], bsemi=12, blev=0.3, cut=800, res=0.5, env={"cut": 0.5, "asemi": 0.02}, atk=0.001, dec=0.4, sus=0, rel=0.4)
+p("PLUCK", "KOTO", a=[0], b=[4], bsemi=12, blev=0.3, cut=800, res=0.5, atk=0.001, dec=0.4, sus=0, rel=0.4, noise=0.0, env={"cut": 0.5, "asemi": 0.02, "noise": 0.4})
 p("PLUCK", "HARP", a=[5], b=[5], boct=1, blev=0.3, cut=1500, env={"cut": 0.35}, dec=1.0, sus=0, rel=1.0)
 p("PLUCK", "MUTED GUITAR", a=[3], aoct=-1, ft=1, cut=500, res=0.2, env={"cut": 0.3}, dec=0.12, sus=0, rel=0.1)
 p("PLUCK", "CRYSTAL PLUCK", a=[2], aoct=1, b=[6], boct=2, blev=0.3, ft=2, cut=400, dec=0.35, sus=0, rel=0.35)
@@ -89,7 +89,7 @@ p("PAD", "HEARTBEAT PAD", a=[9], b=[1], boct=1, blev=0.4, atk=0.8, rel=2, cut=15
 p("PAD", "STRING PAD", a=[3], avoi=8, b=[2], boct=1, bvoi=4, blev=0.35, cut=3000, res=0.1, atk=0.6, dec=1, sus=0.85, rel=1.5, vol=0.4)
 p("PAD", "DARK MATTER", a=[10], aoct=-1, avoi=5, ft=1, cut=400, res=0.5, lrate=0.07, lwave=1, lfo={"cut": 0.25}, atk=2, rel=4, vol=0.5)
 p("PAD", "SHIMMER", a=[6], aoct=1, avoi=4, b=[0], boct=2, blev=0.3, ft=2, cut=800, lrate=3, lwave=4, lfo={"afine": 0.1}, atk=1.2, rel=3, vol=0.45)
-p("PAD", "BREATH PAD", a=[8], avoi=3, ft=3, cut=700, res=0.4, lrate=0.2, lfo={"cut": 0.3}, atk=1, rel=2.5, vol=0.9)
+p("PAD", "BREATH PAD", a=[8], avoi=3, ft=3, cut=700, res=0.4, lrate=0.2, lfo={"cut": 0.3}, atk=1, rel=2.5, vol=0.9, noise=0.15)
 p("PAD", "NEBULA", [NEBULA], a=["c0"], avoi=5, cut=2200, atk=1.5, rel=3, vol=0.45)
 
 # ---------------- KEYS
@@ -138,37 +138,37 @@ arp("CHIP ARP", [0, 4, 7], div=5, cust=[PULSE], a=["c0"], aoct=1, sus=0.9, atk=0
 
 # ---------------- FX
 p("FX", "RADAR SWEEP", a=[6], atk=0.6, dec=3, sus=0.6, rel=4, env={"asemi": 0.5}, lrate=8, lwave=4, lfo={"cut": 0.4}, ft=3, cut=1500, res=0.5)
-p("FX", "TUBE NOISE", a=[10], lrate=12, lwave=4, lfo={"asemi": 0.6, "arot": 1}, ft=2, cut=400, res=0.3, atk=0.01, dec=1, sus=0.5, rel=1.5)
+p("FX", "TUBE NOISE", a=[10], lrate=12, lwave=4, lfo={"asemi": 0.6, "arot": 1}, ft=2, cut=400, res=0.3, atk=0.01, dec=1, sus=0.5, rel=1.5, noise=0.25)
 p("FX", "RISER", a=[10], avoi=6, env={"asemi": 0.5, "cut": 0.6}, atk=4, dec=0.1, sus=1, rel=1, ft=1, cut=300, vol=0.55)
 p("FX", "DOWNLIFTER", a=[6], avoi=4, env={"asemi": 0.5, "cut": 0.3}, atk=0.001, dec=3, sus=0, rel=0.5, cut=4000)
 p("FX", "ALARM", a=[4], lrate=3, lwave=3, lfo={"asemi": 0.25}, sus=1, ft=3, cut=1500, res=0.3)
 p("FX", "SCI-FI ZAP", a=[0], env={"asemi": 0.5}, atk=0.001, dec=0.15, sus=0, rel=0.1)
-p("FX", "WIND", [NOISE], a=["c0"], aoct=2, avoi=8, ft=3, cut=800, res=0.6, lrate=0.5, lwave=4, lfo={"cut": 0.3}, atk=1, rel=2, vol=0.5)
+p("FX", "WIND", [NOISE], a=["c0"], aoct=2, avoi=8, ft=3, cut=800, res=0.6, lrate=0.5, lwave=4, lfo={"cut": 0.3}, atk=1, rel=2, vol=0.5, noise=0.6)
 p("FX", "HELICOPTER", a=[10], aoct=-2, lrate=11, lwave=3, lfo={"vol": 0.4}, cut=600, sus=1)
 p("FX", "UFO", a=[6], avoi=2, lrate=4, lfo={"asemi": 0.2}, cut=3000, res=0.4, sus=1)
 p("FX", "GLITCH", a=[10, 2, 6], am=0.5, sync=1, div=5, lwave=4, lfo={"am": 0.5}, ft=1, cut=3000, res=0.5, sus=1)
 p("FX", "SONAR PING", a=[5], aoct=2, ft=3, cut=1000, res=0.8, dec=2.5, sus=0, rel=2.5, vol=0.9)
 
 # ---------------- DRONE
-p("DRONE", "DEEP SPACE", a=[5], aoct=-2, avoi=6, b=[4], boct=-1, blev=0.5, bvoi=4, ft=1, cut=300, res=0.4, lrate=0.05, lwave=1, lfo={"cut": 0.2}, atk=3, rel=5, vol=0.5)
+p("DRONE", "DEEP SPACE", a=[5], aoct=-2, avoi=6, b=[4], boct=-1, blev=0.5, bvoi=4, ft=1, cut=300, res=0.4, lrate=0.05, lwave=1, lfo={"cut": 0.2}, atk=3, rel=5, vol=0.5, sub=0.5)
 p("DRONE", "SINGING TUBES", a=[0], aoct=-1, avoi=4, b=[0], bsemi=7, blev=0.5, bvoi=4, ft=3, cut=900, res=0.7, lrate=0.07, lfo={"cut": 0.25}, atk=2, rel=4)
 p("DRONE", "MACHINE HUM", a=[10], aoct=-2, b=[10], boct=-2, bfine=6, blev=0.8, cut=500, lrate=0.5, lfo={"vol": 0.1}, atk=1, rel=3, vol=0.5)
 p("DRONE", "FIFTH DRONE", a=[3], aoct=-1, avoi=3, b=[3], boct=-1, bsemi=7, blev=0.7, bvoi=3, cut=1200, atk=2, rel=4, vol=0.5)
 p("DRONE", "TIDE", a=[8], aoct=-1, avoi=5, lrate=0.1, lfo={"vol": 0.3}, cut=800, res=0.3, atk=3, rel=5)
-p("DRONE", "STATIC FIELD", [NOISE], a=["c0"], aoct=-1, avoi=8, ft=1, cut=1500, res=0.2, lrate=2, lwave=4, lfo={"cut": 0.3}, atk=2, rel=4, vol=0.45)
+p("DRONE", "STATIC FIELD", [NOISE], a=["c0"], aoct=-1, avoi=8, ft=1, cut=1500, res=0.2, lrate=2, lwave=4, lfo={"cut": 0.3}, atk=2, rel=4, vol=0.45, noise=0.3)
 p("DRONE", "CATHEDRAL", a=[5], avoi=4, b=[5], boct=1, blev=0.4, cut=2000, res=0.2, lrate=0.05, lfo={"arot": 0.3}, atk=2.5, rel=5, vol=0.45)
 p("DRONE", "SPIRAL DRONE", [SPIRAL], a=["c0"], aoct=-2, avoi=4, cut=900, atk=2, rel=4)
-p("DRONE", "MORPHING DRONE", a=[5, 7, 10, 8], am=0.5, aoct=-1, avoi=4, lrate=0.03, lwave=1, lfo={"am": 0.5}, cut=1500, atk=2, rel=4)
+p("DRONE", "MORPHING DRONE", a=[5, 7, 10, 8], am=0.5, aoct=-1, avoi=4, lrate=0.05, lwave=1, lfo={"am": 0.5}, cut=1500, atk=2, rel=4)
 p("DRONE", "HEART DRONE", a=[9], aoct=-2, avoi=3, b=[1], boct=-1, blev=0.4, ft=1, cut=600, res=0.3, atk=2, rel=4)
 
 # ---------------- PERC: drums from pitch-dropping envelopes and noisy shapes
-p("PERC", "SCOPE KICK", a=[5], aoct=-2, env={"asemi": 0.5}, atk=0.001, dec=0.25, sus=0, rel=0.1, cut=2000, poly=0, vol=0.85)
-p("PERC", "808 BOOM", a=[5], aoct=-2, env={"asemi": 0.3}, atk=0.001, dec=1.2, sus=0, rel=0.3, cut=600, poly=0, vol=0.85)
+p("PERC", "SCOPE KICK", a=[5], aoct=-2, env={"asemi": 0.5}, atk=0.001, dec=0.25, sus=0, rel=0.1, cut=2000, poly=0, vol=0.85, sub=0.5)
+p("PERC", "808 BOOM", a=[5], aoct=-2, env={"asemi": 0.3}, atk=0.001, dec=1.2, sus=0, rel=0.3, cut=600, poly=0, vol=0.85, sub=0.7)
 p("PERC", "TOM", a=[0], aoct=-1, env={"asemi": 0.2}, atk=0.001, dec=0.4, sus=0, rel=0.2, cut=1500)
-p("PERC", "SNARE", [NOISE], a=["c0"], aoct=2, avoi=8, b=[5], blev=0.5, env={"asemi": 0.15, "bsemi": 0.15}, atk=0.001, dec=0.18, sus=0, rel=0.12, ft=2, cut=300)
-p("PERC", "CLOSED HAT", [NOISE], a=["c0"], aoct=3, avoi=8, ft=2, cut=6000, res=0.2, atk=0.001, dec=0.05, sus=0, rel=0.05, vol=0.5)
-p("PERC", "OPEN HAT", [NOISE], a=["c0"], aoct=3, avoi=8, ft=2, cut=5000, atk=0.001, dec=0.4, sus=0, rel=0.3, vol=0.5)
-p("PERC", "CLAP", [NOISE], a=["c0"], aoct=2, avoi=8, ft=3, cut=1500, res=0.4, atk=0.001, dec=0.15, sus=0, rel=0.2, lrate=20, lwave=3, lfo={"vol": 0.4})
+p("PERC", "SNARE", [NOISE], a=["c0"], aoct=2, avoi=8, b=[5], blev=0.5, atk=0.001, dec=0.18, sus=0, rel=0.12, ft=2, cut=300, noise=0.7, env={"asemi": 0.15, "bsemi": 0.15, "noise": -0.3})
+p("PERC", "CLOSED HAT", [NOISE], a=["c0"], aoct=3, avoi=8, ft=2, cut=6000, res=0.2, atk=0.001, dec=0.05, sus=0, rel=0.05, vol=0.5, noise=0.8)
+p("PERC", "OPEN HAT", [NOISE], a=["c0"], aoct=3, avoi=8, ft=2, cut=5000, atk=0.001, dec=0.4, sus=0, rel=0.3, vol=0.5, noise=0.8)
+p("PERC", "CLAP", [NOISE], a=["c0"], aoct=2, avoi=8, ft=3, cut=1500, res=0.4, atk=0.001, dec=0.15, sus=0, rel=0.2, lrate=20, lwave=3, lfo={"vol": 0.4}, noise=0.8)
 p("PERC", "RIM", a=[10], aoct=1, ft=3, cut=2500, res=0.6, atk=0.001, dec=0.04, sus=0, rel=0.04)
 p("PERC", "CONGA", a=[1], env={"asemi": 0.1}, atk=0.001, dec=0.3, sus=0, rel=0.15, cut=3000)
 p("PERC", "METAL HIT", a=[10], b=[10], bsemi=6, bfine=40, blev=0.8, ft=2, cut=800, res=0.5, atk=0.001, dec=0.5, sus=0, rel=0.4)
@@ -180,7 +180,7 @@ p("BRASS", "BRASS SECTION", a=[3], avoi=5, b=[2], bvoi=3, blev=0.5, ft=1, cut=70
 p("BRASS", "FANFARE", a=[10], avoi=3, b=[10], bsemi=7, blev=0.5, ft=1, cut=900, env={"cut": 0.45}, atk=0.05, dec=0.4, sus=0.8, rel=0.3, vol=0.55)
 p("BRASS", "SYNTH HORN", a=[1], avoi=2, cut=600, res=0.3, env={"cut": 0.4}, atk=0.12, dec=0.6, sus=0.7, rel=0.3, lrate=5, lfo={"afine": 0.04})
 p("BRASS", "STAB BRASS", a=[2], avoi=4, b=[3], bsemi=12, blev=0.3, ft=1, cut=500, env={"cut": 0.55}, atk=0.01, dec=0.2, sus=0.3, rel=0.15)
-p("BRASS", "TUBA", a=[5], aoct=-1, ft=1, cut=400, env={"cut": 0.3}, atk=0.06, sus=0.9, poly=0, glide=0.03)
+p("BRASS", "TUBA", a=[5], aoct=-1, ft=1, cut=400, env={"cut": 0.3}, atk=0.06, sus=0.9, poly=0, glide=0.03, sub=0.4)
 p("BRASS", "SWELL BRASS", a=[3], avoi=4, ft=1, cut=300, res=0.2, env={"cut": 0.6}, atk=1.2, dec=0.5, sus=0.9, rel=0.6)
 p("BRASS", "80S POLY BRASS", a=[10], avoi=4, ft=1, cut=1000, res=0.25, env={"cut": 0.35}, atk=0.04, dec=0.5, sus=0.6)
 p("BRASS", "MUTED TRUMPET", a=[1], aoct=1, ft=3, cut=1200, res=0.45, env={"cut": 0.2}, atk=0.04, sus=0.8, poly=0, glide=0.02)
@@ -197,7 +197,7 @@ p("SCOPE ART", "ATOM", [("cos(t)cos(3t + u)", "sin(t)cos(3t + 1.3u)")], a=["c0"]
 p("SCOPE ART", "SPIRO SPIN", a=[8], lrate=0.07, lwave=2, lfo={"arot": 0.5}, **ART)
 p("SCOPE ART", "KALEIDOSCOPE", a=[0, 2, 3, 7, 8], am=0.5, lrate=0.05, lwave=1, lfo={"am": 0.5}, **ART)
 p("SCOPE ART", "EYE", [("cos(t)", "0.5sin(t)^3 + 0.2cos(9t + 2u)")], a=["c0"], **ART)
-p("SCOPE ART", "SPIRAL GALAXY", [("(t/(2pi))cos(8t + u)", "(t/(2pi))sin(8t + u)")], a=["c0"], lrate=0.03, lwave=2, lfo={"arot": 0.5}, **ART)
+p("SCOPE ART", "SPIRAL GALAXY", [("(t/(2pi))cos(8t + u)", "(t/(2pi))sin(8t + u)")], a=["c0"], lrate=0.05, lwave=2, lfo={"arot": 0.5}, **ART)
 p("SCOPE ART", "DIAMOND", [DIAMOND], a=["c0"], lrate=0.15, lwave=1, lfo={"arot": 0.125}, **ART)
 
 # ---------------------------------------------------------------- C++ out
@@ -205,9 +205,11 @@ SIMPLE = dict(am="kAShape", aoct="kAOct", asemi="kASemi", afine="kAFine", arot="
               bm="kBShape", boct="kBOct", bsemi="kBSemi", bfine="kBFine", brot="kBRot", blev="kBLevel", bvoi="kBVoices",
               atk="kAttack", dec="kDecay", sus="kSustain", rel="kRelease", lrate="kLfoRate", lwave="kLfoWave",
               poly="kPoly", leg="kLegato", glide="kGlide", vol="kVolume", ft="kFilterType", cut="kCutoff", res="kRes",
-              sync="kLfoSync", div="kLfoDiv", draw="kLfoDraw", steps="kLfoSteps")
+              sync="kLfoSync", div="kLfoDiv", draw="kLfoDraw", steps="kLfoSteps",
+              sub="kSubLevel", suboct="kSubOct", noise="kNoiseLevel")
 DESTS = dict(am="kAShape", asemi="kASemi", afine="kAFine", arot="kARot", alev="kALevel", bm="kBShape", bsemi="kBSemi",
-             bfine="kBFine", brot="kBRot", blev="kBLevel", lrate="kLfoRate", vol="kVolume", cut="kCutoff", res="kRes")
+             bfine="kBFine", brot="kBRot", blev="kBLevel", lrate="kLfoRate", vol="kVolume", cut="kCutoff", res="kRes",
+             sub="kSubLevel", noise="kNoiseLevel")
 
 def num(v):
     return repr(float(v)) + "f"

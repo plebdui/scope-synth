@@ -1,3 +1,5 @@
+![SCOPE SYNTH](screenshots/logo.png)
+
 # Scope Synth
 
 A polysynth you watch on a CRT. Each oscillator plays a curve (rose, heart,
@@ -11,8 +13,8 @@ fast the beam goes round. The tube shows exactly what you hear.
 |:-:|:-:|:-:|
 | [![AURORA PAD, its LFO cables, PINK theme](screenshots/thumbs/pad.png)](screenshots/pad.png) | [![ARP SPARKLE: an arp drawn on the LFO, CYAN theme](screenshots/thumbs/arp.png)](screenshots/arp.png) | [![SCOPE ART / SPINNING CUBE, AMBER theme](screenshots/thumbs/art.png)](screenshots/art.png) |
 | Pad with LFO cables | Arp drawn on the LFO | Scope art |
-| [![The preset menu](screenshots/thumbs/presets.png)](screenshots/presets.png) | [![Typing your own shape, WHITE theme](screenshots/thumbs/editor.png)](screenshots/editor.png) | |
-| 142 presets | Your own shapes | |
+| [![The preset menu](screenshots/thumbs/presets.png)](screenshots/presets.png) | [![Typing your own shape, WHITE theme](screenshots/thumbs/editor.png)](screenshots/editor.png) | [![Saving your own preset](screenshots/thumbs/save.png)](screenshots/save.png) |
+| 142 presets | Your own shapes | Save and share presets |
 
 - **2 oscillators**, each with a small preview of its shape and MORPH, OCT,
   SEMI, FINE, ROTATE, LEVEL and VOICES (1-8 copies detuned across 20 cents).
@@ -35,6 +37,8 @@ fast the beam goes round. The tube shows exactly what you hear.
   runs from the handle along the gaps between the panels into the control,
   which shows how far the link can move it. Drag the link's tag up/down to set
   how much (negative works too), right-click it to unlink.
+- **SUB** (a circle one or two octaves down: click its label to switch) and
+  **NOISE**, each one knob in the bottom strip, both linkable.
 - **FILTER** per note: LP12, LP24, HP, BP, NOTCH, with CUTOFF and RES (both
   linkable, so the ENV can sweep every note), and a live response graph.
 - **142 presets** in the menu bar, 10+ in each of BASS, LEAD, SYNTH, PLUCK, PAD,
@@ -43,6 +47,14 @@ fast the beam goes round. The tube shows exactly what you hear.
   left, their presets on the right). Some bring their own typed shapes, which
   replace the ones there were. The table they're made from is
   `tools/make_presets.py`.
+- **Your own presets:** SAVE (menu bar) keeps everything, typed shapes too, as
+  a small text file in a pack (`.ssp` files in `ScopeSynth/Presets/<PACK>/`
+  next to your settings: `%APPDATA%` on Windows, `~/Library/Application
+  Support` on Mac). In the preset menu your packs are under YOUR PACKS:
+  right-click one of your presets to delete it, **EXPORT PACK...** writes the
+  whole pack to one `.sspack` file to share, **+ IMPORT...** brings in a
+  `.sspack` or `.ssp` from anyone, and OPEN FOLDER shows the files. Settings
+  are saved by name, so presets keep working in later versions.
 - **Themes** (the gear, top right): GREEN, AMBER, CYAN, WHITE, PINK. The scope's
   phosphor changes to match. Your pick is remembered for every copy of the plugin.
 - **POLY / MONO** (16 notes), **LEGATO** (mono: overlapping notes don't restart

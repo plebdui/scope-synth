@@ -498,7 +498,7 @@ int main(int argc, char** argv)
     static Handler handler;
     v3_cpp_obj(ctrl)->set_component_handler(ctrl, (v3_component_handler**)&handler);
     const int nParams = v3_cpp_obj(ctrl)->get_parameter_count(ctrl);
-    const int base = nParams - 93;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
+    const int base = nParams - 100;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
     std::printf("parameters: %d (synth's own from %d)\n", nParams, base);
 
     v3_audio_processor** proc = nullptr;
@@ -607,9 +607,9 @@ int main(int argc, char** argv)
         auto theme = [&](int t) { click(child, X(1020 - 21), X(14)); click(child, X(900), X(28 + 4 + (t + 1) * 16 + 8)); };
         // the preset menu: categories on the left (row 0 INIT, 1 BASS, 2 LEAD ...), their presets on the right
         auto preset = [&](int cat, int i) {
-            click(child, X(300), X(14));
-            click(child, X(244), X(28 + 4 + cat * 16 + 8));
-            if (cat > 0) click(child, X(414), X(28 + 4 + i * 16 + 8));
+            click(child, X(386), X(14));
+            click(child, X(330), X(28 + 4 + cat * 16 + 8));
+            if (cat > 0) click(child, X(500), X(28 + 4 + i * 16 + 8));
         };
         auto shot = [&](const char* name) {
             if (FILE* f = std::fopen((std::string(dump) + ".req").c_str(), "w")) {
@@ -629,7 +629,7 @@ int main(int argc, char** argv)
         midi(57, 110); pump(2.2); shot("arp"); midi(57, 0); pump(1.0);
         theme(1); preset(13, 0);  // AMBER, SCOPE ART / SPINNING CUBE
         midi(57, 110); pump(2.5); shot("art"); midi(57, 0); pump(0.5);
-        click(child, X(300), X(14)); click(child, X(244), X(28 + 4 + 1 * 16 + 8)); pump(0.5); shot("presets"); click(child, X(900), X(600));  // the menu at BASS
+        click(child, X(386), X(14)); click(child, X(330), X(28 + 4 + 1 * 16 + 8)); pump(0.5); shot("presets"); click(child, X(900), X(600));  // the menu at BASS
         theme(3); preset(0, 0);  // WHITE, INIT
         click(child, X(897), Y(122));  // NEW f(t) on OSC A
         for (const char* t = "sin(3t) + 0.4sin(7t + u)"; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); }
@@ -637,7 +637,13 @@ int main(int argc, char** argv)
         for (const char* t = "cos(2t) - 0.3cos(5t)"; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); }
         pump(1.0); shot("editor");
         PostMessageA(child, WM_KEYDOWN, VK_ESCAPE, 0); PostMessageA(child, WM_KEYUP, VK_ESCAPE, 0xC0000001); pump(0.3);
-        theme(0);
+        theme(0); preset(1, 0);  // GREEN, BASS / SUB SCOPE, then SAVE it as your own
+        click(child, X(620), X(14));
+        for (const char* t = "deep sub"; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); }
+        PostMessageA(child, WM_KEYDOWN, VK_TAB, 0); PostMessageA(child, WM_KEYUP, VK_TAB, 0xC0000001); pump(0.05);
+        for (const char* t = "night drive"; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); }
+        pump(0.6); shot("save");
+        PostMessageA(child, WM_KEYDOWN, VK_ESCAPE, 0); PostMessageA(child, WM_KEYUP, VK_ESCAPE, 0xC0000001); pump(0.3);
         v3_cpp_obj(view)->removed(view);
         v3_cpp_obj_unref(view);
         DestroyWindow(win);
@@ -724,9 +730,9 @@ int main(int argc, char** argv)
     const bool drawn = drawOn && gLastParam >= base + 73 && gLastParam < base + 73 + 8 && std::fabs(gLastValue - (11.0 / 12 + 1) / 2) < 1e-4;
 
     // ---- presets: open the menu, point at BASS (left), pick SUB SCOPE (right, first), play it
-    click(child, X(300), X(14));
-    click(child, X(244), X(28 + 4 + 1 * 16 + 8));
-    click(child, X(414), X(28 + 4 + 0 * 16 + 8));
+    click(child, X(386), X(14));
+    click(child, X(330), X(28 + 4 + 1 * 16 + 8));
+    click(child, X(500), X(28 + 4 + 0 * 16 + 8));
     Stream ps;
     v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&ps);
     const std::string pblob(ps.data.begin(), ps.data.end());
@@ -737,9 +743,9 @@ int main(int argc, char** argv)
     pump(0.5);
     std::printf("preset SUB SCOPE: saved %s, plays peak %.3f\n", presetSaved ? "yes" : "NO", presetPk);
     // a preset with its own typed shape: SCOPE ART / DNA (category 13, 4th)
-    click(child, X(300), X(14));
-    click(child, X(244), X(28 + 4 + 13 * 16 + 8));
-    click(child, X(414), X(28 + 4 + 3 * 16 + 8));
+    click(child, X(386), X(14));
+    click(child, X(330), X(28 + 4 + 13 * 16 + 8));
+    click(child, X(500), X(28 + 4 + 3 * 16 + 8));
     Stream ds;
     v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&ds);
     const std::string dblob(ds.data.begin(), ds.data.end());
@@ -750,6 +756,67 @@ int main(int argc, char** argv)
     pump(0.8);
     std::printf("preset DNA: its shape saved %s, plays peak %.3f\n", dnaShape ? "yes" : "NO", dnaPk);
     std::printf("MONO notes with both oscillators: peak %.3f\n", monoPk);
+
+    // ---- your own presets: SAVE one, find it in the menu under YOUR PACKS, export the pack,
+    // delete the preset, import the pack back
+    auto pickFile = [&](const char* title, const char* file) {
+        HWND dlg = nullptr;
+        for (int i = 0; i < 50 && !dlg; ++i) { pump(0.1); dlg = FindWindowA(nullptr, title); }
+        if (!dlg) { std::printf("file dialog \"%s\" DID NOT OPEN\n", title); return false; }
+        SetDlgItemTextA(dlg, 0x47c, file);
+        SetDlgItemTextA(dlg, 0x480, file);
+        PostMessageA(dlg, WM_COMMAND, IDOK, 0);
+        pump(1.5);
+        return true;
+    };
+    const std::string presetDir = std::string(std::getenv("APPDATA")) + "\\ScopeSynth\\Presets\\MY PRESETS";
+    const std::string savedFile = presetDir + "\\MY TEST.ssp";
+    DeleteFileA(savedFile.c_str());
+    click(child, X(620), X(14));  // SAVE
+    type("my test"); press(VK_TAB); type("my presets"); press(VK_RETURN);  // the filled-in text is replaced by typing
+    pump(0.5);
+    const bool savedOk = GetFileAttributesA(savedFile.c_str()) != INVALID_FILE_ATTRIBUTES;
+    Stream us;
+    v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&us);
+    const std::string ublob(us.data.begin(), us.data.end());
+    std::printf("SAVE: file %s, the project says %s\n", savedOk ? "written" : "MISSING", ublob.find("MY PRESETS/MY TEST") != std::string::npos ? "MY PRESETS/MY TEST" : "SOMETHING ELSE");
+    // the menu: INIT, 13 categories, # YOUR PACKS, then the packs (MY PRESETS first if it's the only one)
+    click(child, X(1020 - 100), X(14));  // (somewhere harmless first: the gear menu opens and closes)
+    click(child, X(700), X(600));
+    click(child, X(386), X(14));
+    click(child, X(330), X(28 + 4 + 15 * 16 + 8));  // MY PRESETS
+    click(child, X(520), X(28 + 4 + 0 * 16 + 8));   // MY TEST
+    Stream us2;
+    v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&us2);
+    const std::string ublob2(us2.data.begin(), us2.data.end());
+    const bool loadedOwn = ublob2.find("MY PRESETS/MY TEST") != std::string::npos;
+    // export: the pack, then EXPORT PACK... (row 1 on the right: under its one preset)
+    const char* exported = "C:\\vst\\my-presets.sspack";
+    DeleteFileA(exported);
+    click(child, X(386), X(14));
+    click(child, X(330), X(28 + 4 + 15 * 16 + 8));
+    click(child, X(520), X(28 + 4 + 1 * 16 + 8));
+    pickFile("Export a Scope Synth pack (.sspack)", exported);
+    const bool exportedOk = GetFileAttributesA(exported) != INVALID_FILE_ATTRIBUTES;
+    // delete: right-click it (asks), click it (gone)
+    click(child, X(386), X(14));
+    click(child, X(330), X(28 + 4 + 15 * 16 + 8));
+    PostMessageA(child, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(X(520), X(28 + 4 + 8)));
+    PostMessageA(child, WM_RBUTTONUP, 0, MAKELPARAM(X(520), X(28 + 4 + 8)));
+    pump(0.3);
+    click(child, X(520), X(28 + 4 + 8));
+    click(child, X(700), X(600));
+    const bool deletedOk = GetFileAttributesA(savedFile.c_str()) == INVALID_FILE_ATTRIBUTES;
+    // import the pack back: + IMPORT... is under the packs (none left now, so right under the header)
+    click(child, X(386), X(14));
+    click(child, X(330), X(28 + 4 + 15 * 16 + 8));
+    pickFile("Import Scope Synth presets (.ssp or .sspack)", exported);
+    const bool importedOk = GetFileAttributesA(savedFile.c_str()) != INVALID_FILE_ATTRIBUTES;
+    std::printf("own presets: loaded from the menu %s, exported %s, deleted %s, imported back %s\n", loadedOwn ? "yes" : "NO",
+                exportedOk ? "yes" : "NO", deletedOk ? "yes" : "NO", importedOk ? "yes" : "NO");
+    const bool ownPresets = savedOk && loadedOwn && exportedOk && deletedOk && importedOk;
+    DeleteFileA(savedFile.c_str());
+    RemoveDirectoryA(presetDir.c_str());
 
     // ---- close the window, stop audio, unload (what FL does when you remove the plugin)
     v3_cpp_obj(view)->removed(view);
@@ -784,6 +851,7 @@ int main(int argc, char** argv)
     CHECK(typed, "a typed shape should be saved with the project");
     CHECK(drawn, "ticking DRAW and drawing in the LFO graph should set its steps");
     CHECK(cutoffDown, "dragging CUTOFF down should lower it");
+    CHECK(ownPresets, "saving, loading, exporting, deleting and importing your own presets should all work");
     CHECK(dnaShape && dnaPk > 0.05f, "a preset's typed shape should load with it and play");
     CHECK(presetSaved && presetPk > 0.05f, "picking a preset from the menu should load it and play");
     CHECK(slotAdded, "+ should add a slot through the A Shapes parameter");
