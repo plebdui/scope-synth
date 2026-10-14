@@ -8,13 +8,18 @@
 
 namespace ss {
 
+// shapes: the 11 built-in curves, then up to 16 typed in. Each oscillator
+// plays a list of up to 8 of them (its slots), which MORPH blends through.
+static constexpr int kBuiltinShapes = 11, kMaxCustom = 16, kMaxShapes = kBuiltinShapes + kMaxCustom, kMaxSlots = 8;
+
 enum Param {
-    kAShape = 0, kAOct, kASemi, kAFine, kARot, kALevel,  // oscillator A
-    kBShape, kBOct, kBSemi, kBFine, kBRot, kBLevel,      // oscillator B
+    kAShape = 0, kAOct, kASemi, kAFine, kARot, kALevel, kAVoices,  // oscillator A (SHAPE = MORPH through its playlist)
+    kBShape, kBOct, kBSemi, kBFine, kBRot, kBLevel, kBVoices,      // oscillator B
     kAttack, kDecay, kSustain, kRelease,                 // envelope (also the volume of each note)
     kLfoRate, kLfoWave,                                  // LFO
     kPoly, kLegato, kGlide, kVolume,                     // voice / master
-    kModBase,                                            // then ENV -> each destination, then LFO -> each
+    kASlots, kASlot0, kBSlots = kASlot0 + kMaxSlots, kBSlot0,  // each oscillator's shape list (parameters, so they can be automated)
+    kModBase = kBSlot0 + kMaxSlots,                      // then ENV -> each destination, then LFO -> each
 };
 
 // knobs the ENV and LFO can be linked to
@@ -48,18 +53,20 @@ struct ParamInfo {
 };
 
 static const ParamInfo kInfo[kModBase] = {
-    {"A Shape", "a_shape", "SHAPE", "", 0, 10, 0, kLin, kKnob},
+    {"A Morph", "a_morph", "MORPH", "%", 0, 1, 0, kLin, kKnob},
     {"A Octave", "a_oct", "OCT", "", -3, 3, 0, kLin, kInt},
     {"A Semi", "a_semi", "SEMI", "st", -12, 12, 0, kLin, kInt},
     {"A Fine", "a_fine", "FINE", "ct", -100, 100, 0, kLin, kKnob},
     {"A Rotate", "a_rot", "ROTATE", "deg", -180, 180, 0, kLin, kKnob},
     {"A Level", "a_level", "LEVEL", "%", 0, 1, 0.8f, kLin, kKnob},
-    {"B Shape", "b_shape", "SHAPE", "", 0, 10, 1, kLin, kKnob},
+    {"A Voices", "a_voices", "VOICES", "", 1, 8, 1, kLin, kInt},
+    {"B Morph", "b_morph", "MORPH", "%", 0, 1, 0, kLin, kKnob},
     {"B Octave", "b_oct", "OCT", "", -3, 3, 0, kLin, kInt},
     {"B Semi", "b_semi", "SEMI", "st", -12, 12, 0, kLin, kInt},
     {"B Fine", "b_fine", "FINE", "ct", -100, 100, 0, kLin, kKnob},
     {"B Rotate", "b_rot", "ROTATE", "deg", -180, 180, 0, kLin, kKnob},
     {"B Level", "b_level", "LEVEL", "%", 0, 1, 0, kLin, kKnob},
+    {"B Voices", "b_voices", "VOICES", "", 1, 8, 1, kLin, kInt},
     {"Attack", "attack", "ATTACK", "s", 0.001f, 10, 0.005f, kLog, kKnob},
     {"Decay", "decay", "DECAY", "s", 0.001f, 10, 0.4f, kLog, kKnob},
     {"Sustain", "sustain", "SUSTAIN", "%", 0, 1, 0.7f, kLin, kKnob},
@@ -70,9 +77,36 @@ static const ParamInfo kInfo[kModBase] = {
     {"Legato", "legato", "LEGATO", "", 0, 1, 0, kLin, kSwitch},
     {"Glide", "glide", "GLIDE", "s", 0, 2, 0, kSquare, kKnob},
     {"Volume", "volume", "VOLUME", "%", 0, 1, 0.7f, kLin, kKnob},
+    {"A Shapes", "a_shapes", "SHAPES", "", 1, kMaxSlots, 1, kLin, kInt},
+    {"A Slot 1", "a_slot1", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"A Slot 2", "a_slot2", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"A Slot 3", "a_slot3", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"A Slot 4", "a_slot4", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"A Slot 5", "a_slot5", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"A Slot 6", "a_slot6", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"A Slot 7", "a_slot7", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"A Slot 8", "a_slot8", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"B Shapes", "b_shapes", "SHAPES", "", 1, kMaxSlots, 1, kLin, kInt},
+    {"B Slot 1", "b_slot1", "SLOT", "", 0, kMaxShapes - 1, 1, kLin, kChoice},
+    {"B Slot 2", "b_slot2", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"B Slot 3", "b_slot3", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"B Slot 4", "b_slot4", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"B Slot 5", "b_slot5", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"B Slot 6", "b_slot6", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"B Slot 7", "b_slot7", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    {"B Slot 8", "b_slot8", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
 };
 
 static const char* const kLfoWaves[5] = {"SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"};
+
+// an oscillator's shape list, read from the parameters
+inline int slotsParam(int o) { return o ? kBSlots : kASlots; }
+inline int slotParam(int o, int i) { return (o ? kBSlot0 : kASlot0) + i; }
+inline int slotCount(const float* P, int o) { return std::clamp((int)std::lround(P[slotsParam(o)]), 1, kMaxSlots); }
+inline int slotShape(const float* P, int o, int i, int shapes)  // shapes: how many exist right now
+{
+    return std::clamp((int)std::lround(P[slotParam(o, i)]), 0, shapes - 1);
+}
 
 inline float paramMin(int p) { return p < kModBase ? kInfo[p].min : -1.0f; }
 inline float paramMax(int p) { return p < kModBase ? kInfo[p].max : 1.0f; }

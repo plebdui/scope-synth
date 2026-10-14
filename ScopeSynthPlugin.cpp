@@ -1,13 +1,36 @@
 #include "ScopeSynthShared.hpp"
+#include <cstring>
 
 START_NAMESPACE_DISTRHO
 
 ScopeSynthPlugin::ScopeSynthPlugin()
-    : Plugin(ss::kParamCount, 0, 0)
+    : Plugin(ss::kParamCount, 0, 1)
 {
+    fShapesCur.reset(new ss::ShapeSet());
+    fShapes.store(fShapesCur.get());
     for (int p = 0; p < ss::kParamCount; ++p)
         fParams[p] = ss::paramDefault(p);
     fEngine.setSampleRate((float)getSampleRate());
+}
+
+// the shapes, saved with the project (Shapes.hpp has the format)
+void ScopeSynthPlugin::initState(uint32_t, State& state)
+{
+    state.key = "shapes";
+    state.label = "Shapes";
+    state.defaultValue = ss::ShapeSet().save().c_str();
+}
+
+void ScopeSynthPlugin::setState(const char* key, const char* value)
+{
+    if (std::strcmp(key, "shapes") != 0)
+        return;
+    std::unique_ptr<ss::ShapeSet> set(new ss::ShapeSet());
+    set->load(value);
+    std::lock_guard<std::mutex> lock(fShapesLock);
+    fShapes.store(set.get(), std::memory_order_release);
+    fShapesOld = std::move(fShapesCur);
+    fShapesCur = std::move(set);
 }
 
 void ScopeSynthPlugin::initAudioPort(bool input, uint32_t index, AudioPort& port)
@@ -40,6 +63,17 @@ void ScopeSynthPlugin::initParameter(uint32_t index, Parameter& p)
         static ParameterEnumerationValue v[5];
         for (int i = 0; i < 5; ++i) { v[i].value = (float)i; v[i].label = kLfoWaves[i]; }
         p.enumValues.count = 5; p.enumValues.restrictedMode = true; p.enumValues.values = v;
+        p.enumValues.deleteLater = false;
+    }
+    if (index >= (uint32_t)kASlot0 && index != (uint32_t)kBSlots) {  // a slot: the shapes by name
+        static ParameterEnumerationValue v[kMaxShapes];
+        static std::string names[kMaxShapes];
+        for (int i = 0; i < kMaxShapes; ++i) {
+            names[i] = i < kBuiltinShapes ? crt::kEquationInfo[i].name : "MY SHAPE " + std::to_string(i - kBuiltinShapes + 1);
+            v[i].value = (float)i;
+            v[i].label = names[i].c_str();
+        }
+        p.enumValues.count = kMaxShapes; p.enumValues.restrictedMode = true; p.enumValues.values = v;
         p.enumValues.deleteLater = false;
     }
     if (index == kPoly) {
@@ -86,11 +120,12 @@ void ScopeSynthPlugin::run(const float**, float** outputs, uint32_t frames,
     float* L = outputs[0];
     float* R = outputs[1];
     uiNotes.drain([this](int note, int vel) { vel ? fEngine.noteOn(note, vel) : fEngine.noteOff(note); });
+    const ss::ShapeSet& shapes = *fShapes.load(std::memory_order_acquire);
     uint32_t done = 0;
     for (uint32_t e = 0; e <= midiEventCount; ++e) {  // play up to each note, right on its sample
         const uint32_t at = e < midiEventCount ? std::min(midiEvents[e].frame, frames) : frames;
         if (at > done) {
-            fEngine.render(L + done, R + done, at - done);
+            fEngine.render(L + done, R + done, at - done, shapes);
             done = at;
         }
         if (e < midiEventCount)

@@ -1,12 +1,14 @@
 // The sound: each note traces the oscillators' shapes the way oscilloscope
 // music works (left = x, right = y, one trip around the shape per cycle, so
-// the key you play sets how fast the beam goes round). Two oscillators, an
+// the key you play sets how fast the beam goes round). Two oscillators (each
+// up to 8 slightly detuned copies: VOICES), an
 // envelope per note, one LFO, and ENV/LFO links to the knobs. Plain C++ with
 // no plugin code, so it can be tested on its own (tests/engine_test.cpp).
 #pragma once
 
 #include "Equations.hpp"
 #include "Params.hpp"
+#include "Shapes.hpp"
 #include <cstdint>
 #include <cstring>
 
@@ -16,7 +18,7 @@ namespace ss {
 // whenever a note uses them and the table is more than a few ms old.
 class ShapeTables {
 public:
-    static constexpr int kT = 1024;
+    static constexpr int kT = kTableN;
 
     ShapeTables()
     {
@@ -160,9 +162,14 @@ public:
         keys[0] = keys[1] = 0;
     }
 
-    // ---- sound
-    void render(float* L, float* R, uint32_t n)
+    // ---- sound: typed-in shapes come from `set` (it may change between blocks)
+    void render(float* L, float* R, uint32_t n, const ShapeSet& set)
     {
+        if (&set != lastSet) {  // new or edited shapes: trace the moving ones afresh
+            lastSet = &set;
+            for (int64_t& st : customStamp) st = -1;
+        }
+        shapes = &set;
         if (wasPoly >= 0 && poly() != (wasPoly == 1))  // switched POLY / MONO: let what's playing ring out
             allOff(false);
         wasPoly = poly();
@@ -197,6 +204,8 @@ private:
     static constexpr int kSub = 32;         // modulation is worked out every 32 samples
     static constexpr int kMaxHeld = 32;
     static constexpr int kTableEvery = 256; // animated curves: re-traced this often (samples)
+    static constexpr int kMaxUnison = 8;
+    static constexpr float kSpreadCents = 20; // VOICES: copies spread over +-10 cents
 
     struct Voice {
         bool active = false, held = false;
@@ -204,7 +213,7 @@ private:
         float vel = 1, env = 0;
         float pitch = 60, target = 60;
         uint64_t order = 0;
-        double ph[2] = {0, 0};
+        double ph[2][kMaxUnison] = {};
         float lv[2] = {0, 0}, cs[2] = {1, 1}, sn[2] = {0, 0};  // last level and rotation, ramped from
     };
 
@@ -221,6 +230,34 @@ private:
     uint32_t rng = 12345;
     float dcIn[2] = {0, 0}, dcOut[2] = {0, 0};
     ShapeTables tables;
+    const ShapeSet* shapes = nullptr;
+    const ShapeSet* lastSet = nullptr;
+    float customX[kMaxCustom][kTableN], customY[kMaxCustom][kTableN];
+    int64_t customStamp[kMaxCustom] = {};
+
+    // the table for shape `id`, traced afresh if it moves and this one is old
+    void table(int id, int64_t tick, const float*& X, const float*& Y)
+    {
+        if (!shapes->isCustom(id)) {
+            tables.ensure(id, u, tick);
+            X = tables.x(id);
+            Y = tables.y(id);
+            return;
+        }
+        const int c = id - crt::kNumEquations;
+        const CustomShape& cs = shapes->customs[c];
+        if (!cs.animated()) {
+            X = cs.X.data();
+            Y = cs.Y.data();
+            return;
+        }
+        if (customStamp[c] != tick) {
+            cs.trace(customX[c], customY[c], u);
+            customStamp[c] = tick;
+        }
+        X = customX[c];
+        Y = customY[c];
+    }
 
     bool poly() const { return P[kPoly] > 0.5f; }
 
@@ -236,7 +273,9 @@ private:
     {
         v.active = true;
         v.env = 0;
-        v.ph[0] = v.ph[1] = 0;
+        for (int o = 0; o < 2; ++o)
+            for (int k = 0; k < kMaxUnison; ++k)
+                v.ph[o][k] = k * 0.618034 - std::floor(k * 0.618034);  // copies start at different points around
         v.lv[0] = v.lv[1] = 0;
         v.cs[0] = v.cs[1] = 1;
         v.sn[0] = v.sn[1] = 0;
@@ -309,20 +348,26 @@ private:
 
             const float* tx[2][2];
             const float* ty[2][2];
-            float morph[2], inc[2], lv[2], cs[2], sn[2];
+            float morph[2], inc[2][kMaxUnison], lv[2], cs[2], sn[2];
+            int uni[2];
             for (int o = 0; o < 2; ++o) {
                 const int b = o * (kBShape - kAShape);
-                const float shape = std::clamp(modulated(kAShape + b, env, lfoVal), 0.0f, (float)(crt::kNumEquations - 1));
-                const int e0 = std::min((int)shape, crt::kNumEquations - 1), e1 = std::min(e0 + 1, crt::kNumEquations - 1);
-                morph[o] = shape - e0;
-                tables.ensure(e0, u, tick);
-                tables.ensure(e1, u, tick);
-                tx[o][0] = tables.x(e0); ty[o][0] = tables.y(e0);
-                tx[o][1] = tables.x(e1); ty[o][1] = tables.y(e1);
+                // MORPH: where along the playlist, blending the two slots either side
+                const int slots = slotCount(P, o);
+                const float pos = std::clamp(modulated(kAShape + b, env, lfoVal), 0.0f, 1.0f) * (slots - 1);
+                const int s0 = std::min((int)pos, slots - 1), s1 = std::min(s0 + 1, slots - 1);
+                morph[o] = pos - s0;
+                table(slotShape(P, o, s0, shapes->count()), tick, tx[o][0], ty[o][0]);
+                table(slotShape(P, o, s1, shapes->count()), tick, tx[o][1], ty[o][1]);
                 const float semis = v.pitch + bend + 12 * std::lround(P[kAOct + b]) + modulated(kASemi + b, env, lfoVal)
                                   + modulated(kAFine + b, env, lfoVal) / 100 - 69;
-                inc[o] = std::min(440.0f * std::exp2(semis / 12) / sr, 0.45f);
-                lv[o] = std::max(modulated(kALevel + b, env, lfoVal), 0.0f) * vol;
+                uni[o] = std::clamp((int)std::lround(P[kAVoices + b]), 1, kMaxUnison);
+                for (int k = 0; k < uni[o]; ++k) {
+                    const float cents = uni[o] > 1 ? kSpreadCents * ((float)k / (uni[o] - 1) - 0.5f) : 0.0f;
+                    inc[o][k] = std::min(440.0f * std::exp2(semis / 12 + cents / 1200) / sr, 0.45f);
+                }
+                // copies add up about as loud as one
+                lv[o] = std::max(modulated(kALevel + b, env, lfoVal), 0.0f) * vol / std::sqrt((float)uni[o]);
                 const float rot = modulated(kARot + b, env, lfoVal) * 0.017453293f;
                 cs[o] = std::cos(rot);
                 sn[o] = std::sin(rot);
@@ -341,18 +386,24 @@ private:
                 const float k = (j + 1) / (float)m;
                 float sx = 0, sy = 0;
                 for (int o = 0; o < 2; ++o) {
-                    v.ph[o] += inc[o];
-                    if (v.ph[o] >= 1) v.ph[o] -= 1;
                     const float level = v.lv[o] + (lv[o] - v.lv[o]) * k;
+                    float x = 0, y = 0;
+                    for (int u2 = 0; u2 < uni[o]; ++u2) {
+                        double& ph = v.ph[o][u2];
+                        ph += inc[o][u2];
+                        if (ph >= 1) ph -= 1;
+                        if (level == 0) continue;
+                        const float p = (float)(ph * ShapeTables::kT);
+                        const int i0 = std::min((int)p, ShapeTables::kT - 1), i1 = (i0 + 1) & (ShapeTables::kT - 1);
+                        const float f = p - i0;
+                        const float xa = tx[o][0][i0] + (tx[o][0][i1] - tx[o][0][i0]) * f;
+                        const float ya = ty[o][0][i0] + (ty[o][0][i1] - ty[o][0][i0]) * f;
+                        const float xb = tx[o][1][i0] + (tx[o][1][i1] - tx[o][1][i0]) * f;
+                        const float yb = ty[o][1][i0] + (ty[o][1][i1] - ty[o][1][i0]) * f;
+                        x += xa + (xb - xa) * morph[o];
+                        y += ya + (yb - ya) * morph[o];
+                    }
                     if (level == 0) continue;
-                    const float p = (float)(v.ph[o] * ShapeTables::kT);
-                    const int i0 = std::min((int)p, ShapeTables::kT - 1), i1 = (i0 + 1) & (ShapeTables::kT - 1);
-                    const float f = p - i0;
-                    const float xa = tx[o][0][i0] + (tx[o][0][i1] - tx[o][0][i0]) * f;
-                    const float ya = ty[o][0][i0] + (ty[o][0][i1] - ty[o][0][i0]) * f;
-                    const float xb = tx[o][1][i0] + (tx[o][1][i1] - tx[o][1][i0]) * f;
-                    const float yb = ty[o][1][i0] + (ty[o][1][i1] - ty[o][1][i0]) * f;
-                    const float x = xa + (xb - xa) * morph[o], y = ya + (yb - ya) * morph[o];
                     const float c = v.cs[o] + (cs[o] - v.cs[o]) * k, s = v.sn[o] + (sn[o] - v.sn[o]) * k;
                     sx += (x * c - y * s) * level;
                     sy += (x * s + y * c) * level;

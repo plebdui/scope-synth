@@ -1,18 +1,25 @@
-// The window: the CRT tube on the left showing what you hear, the two
-// oscillators (each with a little CRT TV showing its shape), the ENV and LFO,
-// voice settings, and a keyboard along the bottom.
-// Linking like Serum: drag the ENV or LFO handle onto a knob. The knob grows
-// a coloured ring and a tag under it; drag the tag up/down to set how much,
+// The window, styled like a terminal: the CRT scope on the left showing what
+// you hear, then the two oscillators, the ENV and LFO, voice settings, and a
+// keyboard along the bottom.
+// Controls are bar meters: drag up/down to change, scroll to nudge,
+// right-click for the default.
+// Linking like Serum: drag the ENV or LFO handle onto a control. It gets a
+// coloured range line and a tag; drag the tag up/down to set how much,
 // right-click the tag to unlink.
+// Shapes: each oscillator has a playlist (starts with one shape). < > pick
+// the selected slot's shape, + adds a slot, MORPH blends through the slots in
+// order. NEW f(t) types a shape as x(t), y(t); it joins the shape list.
 #include "DistrhoUI.hpp"
 #include "ScopeSynthShared.hpp"
 #include "CrtTube.hpp"
+#include "MonoFont.hpp"
 #include "OpenGL.hpp"
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -21,49 +28,64 @@ START_NAMESPACE_DISTRHO
 using namespace ss;
 
 // layout, in window units (multiplied by the host's scale factor)
-static constexpr float kW = 960, kH = 640;
-static constexpr float kTube = 440;          // the tube, top-left, square
-static constexpr float kRowH = 110;          // oscillator / ENV / LFO rows on the right
-static constexpr float kStripY = 440, kStripH = 90;
-static constexpr float kKeysY = 530, kKeysH = 110;
-static constexpr int kWhiteKeys = 29;        // four octaves and a top C
+static constexpr float kW = 1020, kH = 700;
+static constexpr float kTube = 500;          // the scope, top-left, square
+static constexpr float kR = kTube;           // the column of panels right of it starts here
+static constexpr float kOscY[2] = {0, 140}, kOscH = 140;
+static constexpr float kEnvY = 280, kLfoY = 390, kRowH = 110;
+static constexpr float kStripY = 500, kStripH = 90;
+static constexpr float kKeysY = 590, kKeysH = 110;
+static constexpr int kWhiteKeys = 50;        // seven octaves and a top C
 
-static const Color kBg(22, 23, 26), kPanel(30, 32, 36), kEdge(52, 54, 60), kLabel(120, 128, 124), kOff(80, 84, 82);
-static const Color kAccent(70, 250, 110);    // P1 green, like the tube
-static const Color kSrcCol[kNumSources] = {Color(255, 160, 50), Color(70, 190, 255)};  // ENV orange, LFO blue
-static const char* const kSrcName[kNumSources] = {"ENV", "LFO"};
+// terminal colours: green phosphor on black
+static const Color kBg(5, 8, 6), kFg(90, 255, 120), kBright(200, 255, 210), kDim(45, 130, 65), kFaint(22, 52, 30);
+static const Color kErr(255, 95, 80);
+static const Color kSrcCol[2] = {Color(255, 180, 40), Color(80, 220, 255)};  // ENV amber, LFO cyan
+static const char* const kSrcName[2] = {"ENV", "LFO"};
 
 struct Ctl {
     int param;
     float x, y, w, h;
 };
 
-struct Rect {
+struct Box {
     float x, y, w, h;
     bool has(float px, float py) const { return px >= x && px < x + w && py >= y && py < y + h; }
 };
 
-static const Rect kHandle[kNumSources] = {{866, 2 * kRowH + 26, 86, 76}, {866, 3 * kRowH + 26, 86, 76}};
-static const Rect kOctDown = {kW - 150, kStripY + 30, 34, 34}, kOctUp = {kW - 46, kStripY + 30, 34, 34};
+static const Box kHandle[2] = {{kR + 424, kEnvY + 22, 86, 78}, {kR + 424, kLfoY + 22, 86, 78}};
+static const Box kOctDown = {kW - 150, kStripY + 34, 34, 28}, kOctUp = {kW - 46, kStripY + 34, 34, 28};
+
+// an oscillator's playlist bar, under its preview and controls
+static constexpr float kBarDY = 112, kBarH = 20, kChip = 22;
+static Box barPrev(int o) { return {kR + 12, kOscY[o] + kBarDY, 18, kBarH}; }
+static Box barName(int o) { return {kR + 32, kOscY[o] + kBarDY, 104, kBarH}; }
+static Box barNext(int o) { return {kR + 138, kOscY[o] + kBarDY, 18, kBarH}; }
+static Box barChip(int o, int i) { return {kR + 164 + i * kChip, kOscY[o] + kBarDY, kChip - 2, kBarH}; }
+static Box barNew(int o) { return {kR + 362, kOscY[o] + kBarDY, 70, kBarH}; }
+static Box barEdit(int o) { return {kR + 436, kOscY[o] + kBarDY, 72, kBarH}; }
+
+// the equation editor, over the scope
+static const Box kEdPreview = {50, 48, 400, 222}, kEdField[2] = {{86, 288, 380, 24}, {86, 320, 380, 24}};
+static const Box kEdSave = {50, 452, 120, 28}, kEdCancel = {190, 452, 120, 28}, kEdDelete = {330, 452, 120, 28};
 
 class ScopeSynthUI : public UI {
 public:
     ScopeSynthUI()
         : UI((uint)kW, (uint)kH)
     {
-        loadSharedResources();
+        createFontFromMemory("mono", kMonoFont, kMonoFontSize, false);
         for (int p = 0; p < kParamCount; ++p)
             fValues[p] = paramDefault(p);
-        // oscillators: six knobs each, right of their TV
-        for (int o = 0; o < 2; ++o) {
+        for (int o = 0; o < 2; ++o) {  // oscillators: seven controls each, right of the preview
             const int b = o * (kBShape - kAShape);
-            for (int i = 0; i < 6; ++i)
-                fCtls.push_back({kAShape + b + i, 572 + i * 64.0f, o * kRowH + 18, 64, 92});
+            for (int i = 0; i < 7; ++i)
+                fCtls.push_back({kAShape + b + i, kR + 116 + i * 56.0f, kOscY[o] + 16, 56, 94});
         }
         for (int i = 0; i < 4; ++i)
-            fCtls.push_back({kAttack + i, 446 + i * 64.0f, 2 * kRowH + 18, 64, 92});
-        fCtls.push_back({kLfoRate, 446, 3 * kRowH + 18, 64, 92});
-        fCtls.push_back({kLfoWave, 512, 3 * kRowH + 18, 84, 92});
+            fCtls.push_back({kAttack + i, kR + 12 + i * 60.0f, kEnvY + 16, 60, 92});
+        fCtls.push_back({kLfoRate, kR + 12, kLfoY + 16, 60, 92});
+        fCtls.push_back({kLfoWave, kR + 74, kLfoY + 16, 84, 92});
         fCtls.push_back({kPoly, 8, kStripY, 90, kStripH});
         fCtls.push_back({kLegato, 100, kStripY, 90, kStripH});
         fCtls.push_back({kGlide, 192, kStripY, 80, kStripH});
@@ -86,6 +108,44 @@ protected:
             fValues[index] = value;
             repaint();
         }
+    }
+
+    // a project opened (or the plugin's own saved shapes came back)
+    void stateChanged(const char* key, const char* value) override
+    {
+        if (std::strcmp(key, "shapes") != 0 || !value) return;
+        fSet.load(value);
+        repaint();
+    }
+
+    // ---- typing in the equation editor
+    bool onKeyboard(const KeyboardEvent& ev) override
+    {
+        if (!fEdit) return false;
+        if (!ev.press) return true;
+        std::string& f = fField[fFocus];
+        switch (ev.key) {
+        case kKeyBackspace: if (!f.empty()) f.pop_back(); editChanged(); break;
+        case kKeyTab: fFocus ^= 1; break;
+        case kKeyEnter: editSave(); break;
+        case kKeyEscape: fEdit = false; break;
+        case kKeyDelete: f.clear(); editChanged(); break;
+        default: break;
+        }
+        repaint();
+        return true;
+    }
+
+    bool onCharacterInput(const CharacterInputEvent& ev) override
+    {
+        if (!fEdit) return false;
+        const uint c = ev.character;
+        if (c >= 32 && c < 127 && c != '|' && fField[fFocus].size() < 120) {  // | separates x and y when saved
+            fField[fFocus] += (char)c;
+            editChanged();
+            repaint();
+        }
+        return true;
     }
 
     // ---- called by the host many times a second: pull in new sound, move the beam
@@ -123,6 +183,7 @@ protected:
         const auto now = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(now - fLast).count();
         fLast = now;
+        fBlink += std::clamp(dt, 0.0f, 0.25f);
         fTube.step(dt);
         repaint();
     }
@@ -150,8 +211,9 @@ protected:
 
         save();
         scale(s, s);
-        fontFace(NANOVG_DEJAVU_SANS_TTF);
-        drawTubeLabels();
+        fontFace("mono");
+        drawScopeLabels();
+        if (fEdit) drawEditor();
         for (int o = 0; o < 2; ++o)
             drawOscPanel(o);
         drawEnvPanel();
@@ -161,15 +223,15 @@ protected:
         for (const Ctl& c : fCtls)
             drawCtl(c);
         if (fLinkSrc >= 0) {  // dragging a link: a line from the handle to the pointer
-            const Rect& h = kHandle[fLinkSrc];
+            const Box& h = kHandle[fLinkSrc];
             beginPath();
             moveTo(h.x + h.w / 2, h.y + h.h / 2);
             lineTo(fMouseX, fMouseY);
             strokeColor(kSrcCol[fLinkSrc]);
-            strokeWidth(2);
+            strokeWidth(1.5f);
             stroke();
             beginPath();
-            circle(fMouseX, fMouseY, 5);
+            rect(fMouseX - 3, fMouseY - 3, 6, 6);
             fillColor(kSrcCol[fLinkSrc]);
             fill();
         }
@@ -199,7 +261,7 @@ protected:
                 playNote(fKbNote, 0);
                 fKbNote = -1;
             }
-            if (fLinkSrc >= 0) {  // dropped a link on a knob
+            if (fLinkSrc >= 0) {  // dropped a link on a control
                 const Ctl* c = ctlAt(x, y);
                 const int d = c ? destIndex(c->param) : -1;
                 if (d >= 0 && fValues[modParam(fLinkSrc, d)] == 0)
@@ -213,6 +275,17 @@ protected:
             }
             return true;
         }
+        if (fEdit && x < kTube && y < kTube) {
+            if (ev.button != 1) return true;
+            if (kEdSave.has(x, y)) editSave();
+            else if (kEdCancel.has(x, y)) fEdit = false;
+            else if (fEditId >= 0 && kEdDelete.has(x, y)) editDelete();
+            else if (kEdField[0].has(x, y)) fFocus = 0;
+            else if (kEdField[1].has(x, y)) fFocus = 1;
+            repaint();
+            return true;
+        }
+        if (playlistClick(ev.button, x, y)) return true;
         for (int src = 0; src < kNumSources; ++src)
             if (ev.button == 1 && kHandle[src].has(x, y)) {
                 fLinkSrc = src;
@@ -225,21 +298,18 @@ protected:
             return true;
         }
         if (ev.button == 1 && (kOctDown.has(x, y) || kOctUp.has(x, y))) {
-            fKbLow = std::clamp(fKbLow + (kOctUp.has(x, y) ? 12 : -12), 12, 72);
+            fKbLow = std::clamp(fKbLow + (kOctUp.has(x, y) ? 12 : -12), 0, 36);
             repaint();
             return true;
         }
         // a link's tag: drag to set how much, right-click to unlink
         for (const Ctl& c : fCtls)
             for (int src = 0; src < kNumSources; ++src) {
-                Rect t{};
-                if (!tagRect(c, src, t) || !t.has(x, y)) continue;
+                Box t;
+                if (!tagBox(c, src, t) || !t.has(x, y)) continue;
                 const int mp = modParam(src, destIndex(c.param));
-                if (ev.button == 3) {
-                    setValue(mp, 0, true);
-                } else if (ev.button == 1) {
-                    startDrag(mp, y);
-                }
+                if (ev.button == 3) setValue(mp, 0, true);
+                else if (ev.button == 1) startDrag(mp, y);
                 return true;
             }
         const Ctl* c = ctlAt(x, y);
@@ -250,7 +320,7 @@ protected:
         } else if (kind == kChoice) {
             const int n = (int)paramMax(c->param) + 1;
             setValue(c->param, (float)(((int)std::lround(fValues[c->param]) + (ev.button == 3 ? -1 : 1) + n) % n), true);
-        } else if (ev.button == 3) {  // right-click a knob: back to its default
+        } else if (ev.button == 3) {  // right-click: back to the default
             setValue(c->param, paramDefault(c->param), true);
         } else if (ev.button == 1) {
             startDrag(c->param, y);
@@ -318,6 +388,7 @@ private:
     uint fImageW = 0;
     std::string fDumpPath;
     int fDumps = 0;
+    float fBlink = 0;
     // live from the plugin
     float fEnv = 0, fLfo = 0, fPitch = 0;
     int fNote = -1, fVoices = 0;
@@ -328,7 +399,15 @@ private:
     int fDragParam = -1;
     float fDragY = 0, fDragStart = 0;
     int fLinkSrc = -1;
-    int fKbNote = -1, fKbLow = 36;  // keyboard starts at C2
+    int fKbNote = -1, fKbLow = 24;  // keyboard starts at C1
+    // shapes: the same set the plugin plays, kept in step through the "shapes" state
+    ShapeSet fSet;
+    int fSel[2] = {0, 0};  // the slot the arrows change
+    // equation editor
+    bool fEdit = false;
+    int fEditOsc = 0, fEditId = -1, fFocus = 0;  // fEditId: the typed shape being edited, -1 = a new one
+    std::string fField[2], fEditErr;
+    CustomShape fPreview;
 
     void startDrag(int p, float y)
     {
@@ -359,111 +438,124 @@ private:
     const Ctl* ctlAt(float x, float y) const
     {
         for (const Ctl& c : fCtls)
-            if (Rect{c.x, c.y, c.w, c.h}.has(x, y)) return &c;
+            if (Box{c.x, c.y, c.w, c.h}.has(x, y)) return &c;
         return nullptr;
     }
 
-    // ---- keyboard
-    static float whiteW() { return kW / kWhiteKeys; }
-    static bool hasBlackAfter(int white) { const int i = white % 7; return i != 2 && i != 6; }  // none after E and B
-    int whiteNote(int white) const
+    // ---- shapes and playlists
+    void sendShapes()
     {
-        static const int st[7] = {0, 2, 4, 5, 7, 9, 11};
-        return fKbLow + 12 * (white / 7) + st[white % 7];
+        setState("shapes", fSet.save().c_str());
+        repaint();
     }
-    Rect blackRect(int white) const
-    {
-        const float w = whiteW() * 0.6f;
-        return {(white + 1) * whiteW() - w / 2, kKeysY, w, kKeysH * 0.6f};
-    }
-    int keyAt(float x, float y) const
-    {
-        for (int i = 0; i < kWhiteKeys - 1; ++i)
-            if (hasBlackAfter(i) && blackRect(i).has(x, y)) return whiteNote(i) + 1;
-        const int i = std::clamp((int)(x / whiteW()), 0, kWhiteKeys - 1);
-        return whiteNote(i);
-    }
-    static int velocityAt(float y) { return std::clamp((int)(40 + 87 * (y - kKeysY) / kKeysH), 1, 127); }  // lower = harder
-    bool lit(int note) const { return note == fKbNote || ((fKeys[(note & 127) >> 6] >> (note & 63)) & 1); }
 
-    void drawKeyboard()
+    // an oscillator's shape list (from its parameters)
+    int slots(int o) const { return slotCount(fValues, o); }
+    int slotId(int o, int i) const { return slotShape(fValues, o, i, fSet.count()); }
+
+    bool playlistClick(int button, float x, float y)
     {
-        const float ww = whiteW();
-        for (int i = 0; i < kWhiteKeys; ++i) {
-            const int n = whiteNote(i);
-            beginPath();
-            roundedRect(i * ww + 1, kKeysY, ww - 2, kKeysH - 2, 3);
-            if (lit(n))
-                fillPaint(linearGradient(0, kKeysY, 0, kKeysY + kKeysH, Color(150, 255, 170), kAccent));
-            else
-                fillPaint(linearGradient(0, kKeysY, 0, kKeysY + kKeysH, Color(205, 208, 202), Color(240, 242, 236)));
-            fill();
-            if (n % 12 == 0) {
-                char buf[8];
-                std::snprintf(buf, sizeof(buf), "C%d", n / 12 - 1);
-                fontSize(9);
-                textAlign(ALIGN_CENTER | ALIGN_BOTTOM);
-                fillColor(Color(90, 94, 92));
-                text(i * ww + ww / 2, kKeysY + kKeysH - 6, buf, nullptr);
+        for (int o = 0; o < 2; ++o) {
+            const int n = slots(o), total = fSet.count();
+            int& sel = fSel[o];
+            sel = std::min(sel, n - 1);
+            if (barPrev(o).has(x, y) || barNext(o).has(x, y) || barName(o).has(x, y)) {
+                // < back, > next; on the name: click next, right-click back
+                const bool back = barPrev(o).has(x, y) || (barName(o).has(x, y) && button == 3);
+                setValue(slotParam(o, sel), (float)((slotId(o, sel) + (back ? -1 : 1) + total) % total), true);
+                return true;
+            }
+            for (int i = 0; i < n; ++i)
+                if (barChip(o, i).has(x, y)) {
+                    if (button == 3 && n > 1) {  // right-click: take the slot out, the ones after move down
+                        for (int j = i; j < n - 1; ++j)
+                            setValue(slotParam(o, j), (float)slotId(o, j + 1), true);
+                        setValue(slotsParam(o), (float)(n - 1), true);
+                        sel = std::min(sel, n - 2);
+                    } else if (button == 1) {
+                        sel = i;
+                        repaint();
+                    }
+                    return true;
+                }
+            if (n < kMaxSlots && barChip(o, n).has(x, y)) {  // +: a new slot, the next shape along
+                if (button == 1) {
+                    setValue(slotParam(o, n), (float)((slotId(o, n - 1) + 1) % total), true);
+                    setValue(slotsParam(o), (float)(n + 1), true);
+                    sel = n;
+                }
+                return true;
+            }
+            if (barNew(o).has(x, y)) {
+                if (button == 1) openEditor(o, -1);
+                return true;
+            }
+            if (fSet.isCustom(slotId(o, sel)) && barEdit(o).has(x, y)) {
+                if (button == 1) openEditor(o, slotId(o, sel));
+                return true;
             }
         }
-        for (int i = 0; i < kWhiteKeys - 1; ++i) {
-            if (!hasBlackAfter(i)) continue;
-            const Rect r = blackRect(i);
-            beginPath();
-            roundedRect(r.x, r.y, r.w, r.h, 2);
-            if (lit(whiteNote(i) + 1))
-                fillPaint(linearGradient(0, r.y, 0, r.y + r.h, Color(40, 150, 70), kAccent));
-            else
-                fillPaint(linearGradient(0, r.y, 0, r.y + r.h, Color(20, 21, 24), Color(58, 60, 66)));
-            fill();
-        }
-        beginPath();  // shadow along the top edge, under the panel
-        rect(0, kKeysY, kW, 5);
-        fillPaint(linearGradient(0, kKeysY, 0, kKeysY + 5, Color(0, 0, 0, 0.63f), Color(0, 0, 0, 0.00f)));
-        fill();
+        return false;
     }
 
-    // ---- panels
-    void panel(float x, float y, float w, float h, const char* title, const char* sub = nullptr)
+    void openEditor(int o, int id)
     {
-        beginPath();
-        roundedRect(x + 3, y + 3, w - 6, h - 6, 5);
-        fillColor(kPanel);
-        fill();
-        strokeColor(kEdge);
-        strokeWidth(1);
-        stroke();
-        fontSize(10);
-        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
-        fillColor(kLabel);
-        const float tw = text(x + 10, y + 13, title, nullptr);
-        if (sub) {
-            fillColor(kAccent);
-            text(tw + 8, y + 13, sub, nullptr);
+        if (id < 0 && (int)fSet.customs.size() >= kMaxCustom)
+            id = fSet.count() - 1;  // full: edit the last one instead
+        fEdit = true;
+        fEditOsc = o;
+        fEditId = id;
+        fFocus = 0;
+        if (id >= 0) {
+            fField[0] = fSet.custom(id).xs;
+            fField[1] = fSet.custom(id).ys;
+        } else {
+            fField[0].clear();
+            fField[1].clear();
         }
+        editChanged();
+        repaint();
     }
 
-    // the shape an oscillator is playing, as its knobs (and links) set it right now
-    void oscShape(int o, std::vector<float>& xs, std::vector<float>& ys, float& level) const
+    void editChanged()
     {
-        const int b = o * (kBShape - kAShape);
-        const float shape = std::clamp(liveValue(kAShape + b), 0.0f, (float)(crt::kNumEquations - 1));
-        const int e0 = std::min((int)shape, crt::kNumEquations - 1), e1 = std::min(e0 + 1, crt::kNumEquations - 1);
-        const float m = shape - e0, rot = liveValue(kARot + b) * 0.017453293f;
-        const float c = std::cos(rot), s = std::sin(rot);
-        level = liveValue(kALevel + b);
-        const int n = 600;
-        xs.resize(n);
-        ys.resize(n);
-        for (int i = 0; i < n; ++i) {
-            float x0, y0, x1, y1;
-            crt::equation(e0, i / (double)(n - 1), fAnim, x0, y0);
-            crt::equation(e1, i / (double)(n - 1), fAnim, x1, y1);
-            const float x = x0 + (x1 - x0) * m, y = y0 + (y1 - y0) * m;
-            xs[i] = x * c - y * s;
-            ys[i] = x * s + y * c;
+        fPreview.xs = fField[0];
+        fPreview.ys = fField[1];
+        fEditErr = fPreview.compile();
+        if (fEditErr.empty()) fPreview.build();
+    }
+
+    void editSave()
+    {
+        if (!fEditErr.empty()) return;
+        CustomShape c;
+        c.xs = fField[0];
+        c.ys = fField[1];
+        c.compile();
+        c.build();
+        int id = fEditId;
+        if (id >= 0) {
+            fSet.customs[id - crt::kNumEquations] = c;
+        } else {
+            fSet.customs.push_back(c);
+            id = fSet.count() - 1;
         }
+        fEdit = false;
+        sendShapes();
+        setValue(slotParam(fEditOsc, std::min(fSel[fEditOsc], slots(fEditOsc) - 1)), (float)id, true);  // and play it in the selected slot
+    }
+
+    // slots playing a deleted shape go back to ROSE; the typed shapes after it move down one
+    void editDelete()
+    {
+        for (int o = 0; o < 2; ++o)
+            for (int i = 0; i < kMaxSlots; ++i) {
+                const int id = (int)std::lround(fValues[slotParam(o, i)]);
+                if (id >= fEditId) setValue(slotParam(o, i), id == fEditId ? 0.0f : (float)(id - 1), true);
+            }
+        fSet.removeCustom(fEditId);
+        fEdit = false;
+        sendShapes();
     }
 
     // a value as the ENV and LFO are moving it right now (newest note)
@@ -475,102 +567,250 @@ private:
         return fromNorm(p, toNorm(p, fValues[p]) + fValues[modParam(kSrcEnv, d)] * env + fValues[modParam(kSrcLfo, d)] * fLfo);
     }
 
-    void drawOscPanel(int o)
+    // ---- drawing helpers
+    void label(float x, float y, const char* s, const Color& c, float size = 10, int align = ALIGN_LEFT | ALIGN_MIDDLE)
     {
-        const float y0 = o * kRowH;
-        const int b = o * (kBShape - kAShape);
-        const float shape = std::clamp(fValues[kAShape + b], 0.0f, (float)(crt::kNumEquations - 1));
-        const int e0 = (int)std::lround(shape);
-        char sub[64];
-        const float frac = shape - std::floor(shape);
-        if (frac > 0.04f && frac < 0.96f)
-            std::snprintf(sub, sizeof(sub), "%s > %s", crt::kEquationInfo[(int)shape].name,
-                          crt::kEquationInfo[std::min((int)shape + 1, crt::kNumEquations - 1)].name);
-        else
-            std::snprintf(sub, sizeof(sub), "%s", crt::kEquationInfo[e0].name);
-        panel(kTube, y0, kW - kTube, kRowH, o == 0 ? "OSC A" : "OSC B", sub);
-        drawTv(o, {448, y0 + 22, 118, 84});
+        fontSize(size);
+        textAlign(align);
+        fillColor(c);
+        text(x, y, s, nullptr);
     }
 
-    // A little CRT television: plastic bezel, curved glass, the shape bent by
-    // the curve of the glass, glow, scanlines and dark corners.
-    void drawTv(int o, const Rect& r)
+    void outline(const Box& b, const Color& c, float width = 1)
     {
-        beginPath();  // bezel
-        roundedRect(r.x, r.y, r.w, r.h, 9);
-        fillPaint(linearGradient(r.x, r.y, r.x, r.y + r.h, Color(70, 66, 60), Color(34, 32, 30)));
-        fill();
-        strokeColor(Color(12, 12, 12));
-        strokeWidth(1);
+        beginPath();
+        rect(b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1);
+        strokeColor(c);
+        strokeWidth(width);
         stroke();
-        const Rect g = {r.x + 7, r.y + 6, r.w - 14, r.h - 12};
-        const float cx = g.x + g.w / 2, cy = g.y + g.h / 2;
+    }
+
+    void fillBox(const Box& b, const Color& c)
+    {
+        beginPath();
+        rect(b.x, b.y, b.w, b.h);
+        fillColor(c);
+        fill();
+    }
+
+    // a box with its title set into the top line: --[ OSC A ] ROSE------
+    void panel(const Box& b, const char* title, const char* sub = nullptr)
+    {
+        outline({b.x + 4, b.y + 6, b.w - 8, b.h - 10}, kDim);
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "[ %s ]", title);
+        fontSize(11);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        Rectangle<float> r;
+        textBounds(0, 0, buf, nullptr, r);
+        const float tw = r.getWidth();
+        float sw = 0;
+        if (sub) {
+            textBounds(0, 0, sub, nullptr, r);
+            sw = r.getWidth();
+        }
+        fillBox({b.x + 12, b.y, tw + (sub ? sw + 10 : 0) + 8, 12}, kBg);
+        label(b.x + 16, b.y + 6.5f, buf, kFg, 11);
+        if (sub) label(b.x + 16 + tw + 8, b.y + 6.5f, sub, kBright, 11);
+    }
+
+    // a text button
+    void button(const Box& b, const char* s, const Color& c, bool lit = false)
+    {
+        if (lit) fillBox(b, Color(c.red, c.green, c.blue, 0.2f));
+        outline(b, lit ? c : Color(c.red, c.green, c.blue, 0.55f));
+        label(b.x + b.w / 2, b.y + b.h / 2 + 0.5f, s, c, 10, ALIGN_CENTER | ALIGN_MIDDLE);
+    }
+
+    // ---- keyboard
+    static float whiteW() { return kW / kWhiteKeys; }
+    static bool hasBlackAfter(int white) { const int i = white % 7; return i != 2 && i != 6; }  // none after E and B
+    int whiteNote(int white) const
+    {
+        static const int st[7] = {0, 2, 4, 5, 7, 9, 11};
+        return fKbLow + 12 * (white / 7) + st[white % 7];
+    }
+    Box blackBox(int white) const
+    {
+        const float w = whiteW() * 0.6f;
+        return {(white + 1) * whiteW() - w / 2, kKeysY, w, kKeysH * 0.6f};
+    }
+    int keyAt(float x, float y) const
+    {
+        for (int i = 0; i < kWhiteKeys - 1; ++i)
+            if (hasBlackAfter(i) && blackBox(i).has(x, y)) return whiteNote(i) + 1;
+        return whiteNote(std::clamp((int)(x / whiteW()), 0, kWhiteKeys - 1));
+    }
+    static int velocityAt(float y) { return std::clamp((int)(40 + 87 * (y - kKeysY) / kKeysH), 1, 127); }  // lower = harder
+    bool lit(int note) const { return note == fKbNote || ((fKeys[(note & 127) >> 6] >> (note & 63)) & 1); }
+
+    void drawKeyboard()
+    {
+        const float ww = whiteW();
+        for (int i = 0; i < kWhiteKeys; ++i) {
+            const int n = whiteNote(i);
+            const Box k = {i * ww + 0.5f, kKeysY + 2, ww - 1, kKeysH - 4};
+            fillBox(k, lit(n) ? kFg : Color(232, 234, 228));
+            if (n % 12 == 0) {
+                char buf[8];
+                std::snprintf(buf, sizeof(buf), "C%d", n / 12 - 1);
+                label(k.x + k.w / 2, k.y + k.h - 8, buf, Color(90, 96, 92), 8, ALIGN_CENTER | ALIGN_MIDDLE);
+            }
+        }
+        for (int i = 0; i < kWhiteKeys - 1; ++i) {
+            if (!hasBlackAfter(i)) continue;
+            const Box k = blackBox(i);
+            fillBox({k.x, k.y + 2, k.w, k.h}, lit(whiteNote(i) + 1) ? kFg : Color(12, 12, 12));
+        }
+    }
+
+    // ---- panels
+    // the shape an oscillator is playing, as its controls (and links) set it right now
+    void oscShape(int o, std::vector<float>& xs, std::vector<float>& ys, float& level) const
+    {
+        const int b = o * (kBShape - kAShape);
+        const int n = slots(o);
+        const float pos = std::clamp(liveValue(kAShape + b), 0.0f, 1.0f) * (n - 1);
+        const int s0 = std::min((int)pos, n - 1), s1 = std::min(s0 + 1, n - 1);
+        const float m = pos - s0, rot = liveValue(kARot + b) * 0.017453293f;
+        const float c = std::cos(rot), s = std::sin(rot);
+        level = liveValue(kALevel + b);
+        const int pts = 600;
+        xs.resize(pts);
+        ys.resize(pts);
+        for (int i = 0; i < pts; ++i) {
+            float x0, y0, x1, y1;
+            fSet.point(slotId(o, s0), i / (double)(pts - 1), fAnim, x0, y0);
+            fSet.point(slotId(o, s1), i / (double)(pts - 1), fAnim, x1, y1);
+            const float x = x0 + (x1 - x0) * m, y = y0 + (y1 - y0) * m;
+            xs[i] = x * c - y * s;
+            ys[i] = x * s + y * c;
+        }
+    }
+
+    void drawOscPanel(int o)
+    {
+        const float y0 = kOscY[o];
+        const int b = o * (kBShape - kAShape);
+        const int n = slots(o), sel = std::min(fSel[o], n - 1);
+        // the title says what's playing: one shape, or the two MORPH is between
+        char sub[96];
+        const float pos = std::clamp(fValues[kAShape + b], 0.0f, 1.0f) * (n - 1);
+        const int s0 = std::min((int)pos, n - 1), s1 = std::min(s0 + 1, n - 1);
+        const float frac = pos - s0;
+        if (frac > 0.04f && frac < 0.96f)
+            std::snprintf(sub, sizeof(sub), "%s > %s", fSet.name(slotId(o, s0)).c_str(), fSet.name(slotId(o, s1)).c_str());
+        else
+            std::snprintf(sub, sizeof(sub), "%s", fSet.name(slotId(o, frac >= 0.96f ? s1 : s0)).c_str());
+        panel({kR, y0, kW - kR, kOscH}, o == 0 ? "OSC A" : "OSC B", sub);
+
+        // what it looks like, as a plain line drawing
+        const Box g = {kR + 12, y0 + 18, 100, 88};
+        outline(g, kFaint);
         std::vector<float> xs, ys;
         float level;
         oscShape(o, xs, ys, level);
-        const bool on = level > 0.001f;
-        beginPath();  // the glass, glowing faintly when there's a picture
-        roundedRect(g.x, g.y, g.w, g.h, 14);
-        fillPaint(radialGradient(cx, cy, 4, g.w * 0.65f, on ? Color(18, 40, 24) : Color(14, 16, 15), Color(4, 6, 5)));
-        fill();
-        save();
-        intersectScissor(g.x, g.y, g.w, g.h);
-        if (on) {
-            // barrel distortion: the further from the middle, the more it bulges out
-            const float sx = g.w * 0.5f / 1.05f, sy = g.h * 0.5f / 1.05f;
-            auto warp = [&](float x, float y, float& px, float& py) {
-                const float k = 1 + 0.16f * (x * x + y * y);
-                px = cx + x * k * sx;
-                py = cy - y * k * sy;
-            };
-            const float bright = std::clamp(0.35f + 0.65f * level / 0.8f, 0.35f, 1.0f);
-            for (int pass = 0; pass < 2; ++pass) {  // wide soft glow, then the sharp beam
-                beginPath();
-                for (size_t i = 0; i < xs.size(); ++i) {
-                    float px, py;
-                    warp(xs[i], ys[i], px, py);
-                    if (i == 0) moveTo(px, py); else lineTo(px, py);
-                }
-                lineJoin(ROUND);
-                strokeColor(pass == 0 ? Color(kAccent.red, kAccent.green, kAccent.blue, 0.22f * bright)
-                                      : Color(0.75f, 1.0f, 0.8f, 0.9f * bright));
-                strokeWidth(pass == 0 ? 4.5f : 1.1f);
-                stroke();
-            }
-        } else {
-            fontSize(9);
-            textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-            fillColor(kOff);
-            text(cx, cy, "LEVEL 0", nullptr);
-        }
-        for (float y = g.y + 1; y < g.y + g.h; y += 2.5f) {  // scanlines
+        if (level > 0.001f) {
+            const float cx = g.x + g.w / 2, cy = g.y + g.h / 2, sc = std::min(g.w, g.h) / 2 / 0.9f;
             beginPath();
-            rect(g.x, y, g.w, 1);
-            fillColor(Color(0, 0, 0, 0.35f));
-            fill();
+            for (size_t i = 0; i < xs.size(); ++i)
+                if (i == 0) moveTo(cx + xs[i] * sc, cy - ys[i] * sc); else lineTo(cx + xs[i] * sc, cy - ys[i] * sc);
+            lineJoin(ROUND);
+            strokeColor(Color(kFg.red, kFg.green, kFg.blue, 0.4f + 0.6f * std::min(level / 0.8f, 1.0f)));
+            strokeWidth(1.1f);
+            stroke();
+        } else {
+            label(g.x + g.w / 2, g.y + g.h / 2, "-- OFF --", kDim, 10, ALIGN_CENTER | ALIGN_MIDDLE);
         }
+
+        // playlist bar: < NAME > for the selected slot, the slots, +, NEW f(t), EDIT f(t)
+        button(barPrev(o), "<", kFg);
+        button(barNext(o), ">", kFg);
+        const Box nm = barName(o);
+        outline(nm, kDim);
+        save();
+        intersectScissor(nm.x + 2, nm.y, nm.w - 4, nm.h);
+        label(nm.x + nm.w / 2, nm.y + nm.h / 2 + 0.5f, fSet.name(slotId(o, sel)).c_str(), kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
         restore();
-        beginPath();  // dark corners where the glass curves away
-        roundedRect(g.x, g.y, g.w, g.h, 14);
-        fillPaint(boxGradient(g.x + 4, g.y + 3, g.w - 8, g.h - 6, 16, 14, Color(0, 0, 0, 0.00f), Color(0, 0, 0, 0.78f)));
-        fill();
-        beginPath();  // reflection on the glass
-        roundedRect(g.x, g.y, g.w, g.h, 14);
-        fillPaint(linearGradient(g.x, g.y, g.x + g.w * 0.6f, g.y + g.h, Color(255, 255, 255, 0.12f), Color(255, 255, 255, 0.00f)));
-        fill();
-        beginPath();  // power lamp
-        circle(r.x + r.w - 8, r.y + r.h - 4, 1.6f);
-        fillColor(on ? Color(255, 60, 40) : Color(70, 30, 25));
-        fill();
+        // the slots: the selected one outlined bright, the ones MORPH is playing lit by how much
+        const float live = std::clamp(liveValue(kAShape + b), 0.0f, 1.0f) * (n - 1);
+        for (int i = 0; i < n; ++i) {
+            const Box r = barChip(o, i);
+            const float w = n > 1 ? std::max(0.0f, 1 - std::fabs(live - i)) : 0.0f;
+            fillBox(r, Color(kFg.red, kFg.green, kFg.blue, 0.6f * w));
+            outline(r, i == sel ? kBright : kDim, i == sel ? 1.5f : 1);
+            char num[4];
+            std::snprintf(num, sizeof(num), "%d", i + 1);
+            label(r.x + r.w / 2, r.y + r.h / 2 + 0.5f, num, w > 0.5f ? kBg : i == sel ? kBright : kFg, 10, ALIGN_CENTER | ALIGN_MIDDLE);
+        }
+        if (n < kMaxSlots) button(barChip(o, n), "+", kFg);
+        button(barNew(o), "NEW f(t)", kSrcCol[kSrcEnv]);
+        if (fSet.isCustom(slotId(o, sel))) button(barEdit(o), "EDIT f(t)", kSrcCol[kSrcEnv]);
+    }
+
+    // $ new shape: x(t) and y(t), a live preview above
+    void drawEditor()
+    {
+        fillBox({0, 0, kTube, kTube}, Color(kBg.red, kBg.green, kBg.blue, 0.97f));
+        outline({6, 6, kTube - 12, kTube - 12}, kDim);
+        char title[96];
+        std::snprintf(title, sizeof(title), "$ %s  # osc %c, slot %d", fEditId >= 0 ? "edit shape" : "new shape",
+                      'a' + fEditOsc, fSel[fEditOsc] + 1);
+        label(20, 26, title, kFg, 12);
+        const Box& g = kEdPreview;
+        outline(g, kFaint);
+        if (fEditErr.empty()) {
+            const float sc = std::min(g.w, g.h) / 2 / 0.9f, cx = g.x + g.w / 2, cy = g.y + g.h / 2;
+            beginPath();
+            for (int i = 0; i <= 800; ++i) {
+                float px, py;
+                fPreview.point(i / 800.0, fBlink, px, py);
+                if (i == 0) moveTo(cx + px * sc, cy - py * sc); else lineTo(cx + px * sc, cy - py * sc);
+            }
+            lineJoin(ROUND);
+            strokeColor(kFg);
+            strokeWidth(1.3f);
+            stroke();
+        }
+        static const char* names[2] = {"x =", "y ="};
+        const bool blink = std::fmod(fBlink, 1.0f) < 0.6f;
+        for (int f = 0; f < 2; ++f) {
+            const Box& r = kEdField[f];
+            label(r.x - 10, r.y + r.h / 2, names[f], f == fFocus ? kFg : kDim, 12, ALIGN_RIGHT | ALIGN_MIDDLE);
+            outline(r, f == fFocus ? kFg : kDim);
+            save();
+            intersectScissor(r.x + 2, r.y, r.w - 4, r.h);
+            fontSize(12);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            Rectangle<float> tb;
+            if (!fField[f].empty()) textBounds(0, 0, fField[f].c_str(), nullptr, tb);
+            const float tw = fField[f].empty() ? 0.0f : tb.getWidth();
+            const float tx = std::min(r.x + 8, r.x + r.w - 16 - tw);  // keep the end in view
+            if (fField[f].empty())  // a faint example until you type
+                label(r.x + 16, r.y + r.h / 2 + 0.5f, f == 0 ? "sin(3t)" : "cos(2t)", kFaint, 12);
+            else
+                label(tx, r.y + r.h / 2 + 0.5f, fField[f].c_str(), kBright, 12);
+            if (f == fFocus && blink) fillBox({tx + tw + 1, r.y + 5, 7, r.h - 10}, kFg);  // block cursor
+            restore();
+        }
+        if (!fField[0].empty() || !fField[1].empty()) {
+            if (!fEditErr.empty())
+                label(kTube / 2, 364, ("error: " + fEditErr).c_str(), kErr, 11, ALIGN_CENTER | ALIGN_MIDDLE);
+            else
+                label(kTube / 2, 364, "ok", kFg, 11, ALIGN_CENTER | ALIGN_MIDDLE);
+        }
+        button(kEdSave, "[ SAVE ]", fEditErr.empty() ? kFg : kDim);
+        button(kEdCancel, "[ CANCEL ]", kDim);
+        if (fEditId >= 0) button(kEdDelete, "[ DELETE ]", kErr);
     }
 
     void drawEnvPanel()
     {
-        const float y0 = 2 * kRowH;
-        panel(kTube, y0, kW - kTube, kRowH, "ENV", "also each note's volume");
-        // the envelope's shape (times on a log-ish scale so short and long both show)
-        const Rect g = {708, y0 + 26, 150, 74};
-        graphBox(g);
+        const float y0 = kEnvY;
+        panel({kR, y0, kW - kR, kRowH}, "ENV");
+        // its shape (times on a square-root scale so short and long both show)
+        const Box g = {kR + 256, y0 + 22, 160, 78};
+        outline(g, kFaint);
         auto tx = [](float t) { return std::sqrt(std::clamp(t, 0.0f, 10.0f) / 10.0f); };
         const float a = tx(fValues[kAttack]), d = tx(fValues[kDecay]), r = tx(fValues[kRelease]);
         const float total = a + d + 0.35f + r, sus = fValues[kSustain];
@@ -583,23 +823,19 @@ private:
         lineTo(X(a + d + 0.35f), Y(sus));
         lineTo(X(total), Y(0));
         strokeColor(kSrcCol[kSrcEnv]);
-        strokeWidth(1.6f);
+        strokeWidth(1.3f);
         stroke();
-        if (fNote >= 0) {  // where the newest note's envelope is now
-            beginPath();
-            rect(g.x + 2, Y(fEnv), g.w - 4, 1);
-            fillColor(Color(255, 160, 50, 0.47f));
-            fill();
-        }
+        if (fNote >= 0)  // where the newest note's envelope is now
+            fillBox({g.x + 2, Y(fEnv), g.w - 4, 1}, Color(255, 180, 40, 0.45f));
         drawHandle(kSrcEnv);
     }
 
     void drawLfoPanel()
     {
-        const float y0 = 3 * kRowH;
-        panel(kTube, y0, kW - kTube, kRowH, "LFO", "one for all notes");
-        const Rect g = {602, y0 + 26, 256, 74};
-        graphBox(g);
+        const float y0 = kLfoY;
+        panel({kR, y0, kW - kR, kRowH}, "LFO");
+        const Box g = {kR + 162, y0 + 22, 254, 78};
+        outline(g, kFaint);
         const int wave = (int)std::lround(fValues[kLfoWave]);
         beginPath();
         for (int i = 0; i <= 120; ++i) {
@@ -616,142 +852,70 @@ private:
             if (i == 0) moveTo(x, y); else lineTo(x, y);
         }
         strokeColor(kSrcCol[kSrcLfo]);
-        strokeWidth(1.6f);
+        strokeWidth(1.3f);
         stroke();
-        beginPath();  // where it is now
-        rect(g.x + 2, g.y + g.h / 2 - (g.h / 2 - 6) * fLfo, g.w - 4, 1);
-        fillColor(Color(70, 190, 255, 0.47f));
-        fill();
+        fillBox({g.x + 2, g.y + g.h / 2 - (g.h / 2 - 6) * fLfo, g.w - 4, 1}, Color(80, 220, 255, 0.45f));
         drawHandle(kSrcLfo);
     }
 
-    void graphBox(const Rect& g)
-    {
-        beginPath();
-        roundedRect(g.x, g.y, g.w, g.h, 3);
-        fillColor(Color(12, 13, 14));
-        fill();
-        strokeColor(kEdge);
-        strokeWidth(1);
-        stroke();
-    }
-
-    // the thing you drag onto a knob to link it
+    // the thing you drag onto a control to link it
     void drawHandle(int src)
     {
-        const Rect& h = kHandle[src];
+        const Box& h = kHandle[src];
         const Color& c = kSrcCol[src];
-        beginPath();
-        roundedRect(h.x, h.y, h.w, h.h, 6);
-        fillColor(Color(c.red, c.green, c.blue, fLinkSrc == src ? 0.35f : 0.15f));
-        fill();
-        strokeColor(c);
-        strokeWidth(1.2f);
-        stroke();
-        // four-way arrows
-        const float cx = h.x + h.w / 2, cy = h.y + 26;
-        beginPath();
-        moveTo(cx - 10, cy); lineTo(cx + 10, cy);
-        moveTo(cx, cy - 10); lineTo(cx, cy + 10);
-        for (int k = 0; k < 4; ++k) {
-            const float dx = k == 0 ? 1.0f : k == 1 ? -1.0f : 0.0f, dy = k == 2 ? 1.0f : k == 3 ? -1.0f : 0.0f;
-            const float ex = cx + dx * 10, ey = cy + dy * 10;
-            moveTo(ex - dx * 4 + dy * 3, ey - dy * 4 + dx * 3);
-            lineTo(ex, ey);
-            lineTo(ex - dx * 4 - dy * 3, ey - dy * 4 - dx * 3);
-        }
-        strokeColor(c);
-        strokeWidth(1.5f);
-        stroke();
-        fontSize(11);
-        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-        fillColor(c);
-        text(cx, h.y + 50, kSrcName[src], nullptr);
-        fontSize(8);
-        fillColor(kLabel);
-        text(cx, h.y + 64, "drag onto a knob", nullptr);
+        if (fLinkSrc == src) fillBox(h, Color(c.red, c.green, c.blue, 0.2f));
+        outline(h, c);
+        label(h.x + h.w / 2, h.y + 28, "<-+->", c, 13, ALIGN_CENTER | ALIGN_MIDDLE);
+        label(h.x + h.w / 2, h.y + 52, kSrcName[src], c, 13, ALIGN_CENTER | ALIGN_MIDDLE);
     }
 
     void drawStrip()
     {
-        beginPath();
-        rect(0, kStripY, kW, kStripH);
-        fillColor(Color(26, 27, 30));
-        fill();
-        fontSize(9.5f);
-        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-        fillColor(kLabel);
-        const float hx = (362 + kOctDown.x) / 2;
-        if (fLinkSrc >= 0) {
-            fillColor(kSrcCol[fLinkSrc]);
-            text(hx, kStripY + 45, "drop it on a knob to link it", nullptr);
-        } else {
-            text(hx, kStripY + 30, "drag ENV or LFO onto a knob to link it", nullptr);
-            text(hx, kStripY + 46, "drag a link's tag up/down to set how much, right-click it to unlink", nullptr);
-            text(hx, kStripY + 62, "right-click a knob for its default", nullptr);
-        }
+        outline({4, kStripY + 2, kW - 8, kStripH - 6}, kFaint);
         // keyboard octave
-        for (const Rect* r : {&kOctDown, &kOctUp}) {
-            beginPath();
-            roundedRect(r->x, r->y, r->w, r->h, 4);
-            fillColor(kPanel);
-            fill();
-            strokeColor(kEdge);
-            stroke();
-            fontSize(14);
-            fillColor(kAccent);
-            text(r->x + r->w / 2, r->y + r->h / 2, r == &kOctDown ? "<" : ">", nullptr);
-        }
+        button(kOctDown, "<", kFg);
+        button(kOctUp, ">", kFg);
         char buf[24];
-        std::snprintf(buf, sizeof(buf), "C%d-C%d", fKbLow / 12 - 1, fKbLow / 12 + 3);
-        fontSize(11);
-        fillColor(kAccent);
-        text((kOctDown.x + kOctDown.w + kOctUp.x) / 2, kOctDown.y + kOctDown.h / 2, buf, nullptr);
-        fontSize(9);
-        fillColor(kLabel);
-        text((kOctDown.x + kOctDown.w + kOctUp.x) / 2, kStripY + 15, "KEYS", nullptr);
+        std::snprintf(buf, sizeof(buf), "C%d-C%d", fKbLow / 12 - 1, fKbLow / 12 + 6);
+        const float mid = (kOctDown.x + kOctDown.w + kOctUp.x) / 2;
+        label(mid, kOctDown.y + kOctDown.h / 2, buf, kBright, 11, ALIGN_CENTER | ALIGN_MIDDLE);
+        label(mid, kStripY + 20, "KEYS", kDim, 10, ALIGN_CENTER | ALIGN_MIDDLE);
     }
 
-    void drawTubeLabels()
+    void drawScopeLabels()
     {
         static const char* names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
         char buf[64];
-        fontSize(12);
-        textAlign(ALIGN_LEFT | ALIGN_TOP);
         if (fNote >= 0) {
             const float hz = 440.0f * std::exp2((fPitch - 69) / 12);
             std::snprintf(buf, sizeof(buf), "%s%d  %.1f Hz", names[fNote % 12], fNote / 12 - 1, hz);
-            fillColor(Color(kAccent.red, kAccent.green, kAccent.blue, 0.85f));
-            text(14, 12, buf, nullptr);
-            std::snprintf(buf, sizeof(buf), "%d %s", fVoices, fVoices == 1 ? "VOICE" : "VOICES");
-            textAlign(ALIGN_RIGHT | ALIGN_TOP);
-            fillColor(kLabel);
-            text(kTube - 14, 12, buf, nullptr);
-        } else {
-            textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-            fillColor(Color(kAccent.red, kAccent.green, kAccent.blue, 0.5f));
-            text(kTube / 2, kTube / 2 + 40, "PLAY A NOTE", nullptr);
+            label(14, 16, buf, kFg, 12);
+            std::snprintf(buf, sizeof(buf), "%d %s", fVoices, fVoices == 1 ? "note" : "notes");
+            label(kTube - 14, 16, buf, kDim, 11, ALIGN_RIGHT | ALIGN_MIDDLE);
         }
-        textAlign(ALIGN_CENTER | ALIGN_BOTTOM);
-        fontSize(9);
-        fillColor(kOff);
-        text(kTube / 2, kTube - 8, "SCOPE SYNTH", nullptr);
+        label(kTube / 2, kTube - 12, "scope-synth", kDim, 10, ALIGN_CENTER | ALIGN_MIDDLE);
     }
 
-    // ---- knobs, switches, selectors
+    // ---- controls: bar meters, [x] switches, < choices >
     void valueText(int p, char* out, size_t n) const
     {
         const float v = fValues[p];
         switch (p) {
-        case kAShape: case kBShape: std::snprintf(out, n, "%.2f", v + 1); break;
-        case kAOct: case kBOct: case kASemi: case kBSemi: std::snprintf(out, n, "%+d", (int)std::lround(v)); break;
-        case kAFine: case kBFine: std::snprintf(out, n, "%+d ct", (int)std::lround(v)); break;
-        case kARot: case kBRot: std::snprintf(out, n, "%d\xC2\xB0", (int)std::lround(v)); break;
-        case kAttack: case kDecay: case kRelease: case kGlide:
-            if (v < 1) std::snprintf(out, n, "%d ms", (int)std::lround(v * 1000));
-            else std::snprintf(out, n, "%.2f s", v);
+        case kAShape: case kBShape: {  // where along the playlist: slot 1.0 .. slot n
+            const int count = slots(p == kBShape);
+            if (count < 2) std::snprintf(out, n, "-");
+            else std::snprintf(out, n, "%.1f", 1 + v * (count - 1));
             break;
-        case kLfoRate: std::snprintf(out, n, "%.2f Hz", v); break;
+        }
+        case kAOct: case kBOct: case kASemi: case kBSemi: std::snprintf(out, n, "%+d", (int)std::lround(v)); break;
+        case kAVoices: case kBVoices: std::snprintf(out, n, "%d", (int)std::lround(v)); break;
+        case kAFine: case kBFine: std::snprintf(out, n, "%+dct", (int)std::lround(v)); break;
+        case kARot: case kBRot: std::snprintf(out, n, "%ddeg", (int)std::lround(v)); break;
+        case kAttack: case kDecay: case kRelease: case kGlide:
+            if (v < 1) std::snprintf(out, n, "%dms", (int)std::lround(v * 1000));
+            else std::snprintf(out, n, "%.2fs", v);
+            break;
+        case kLfoRate: std::snprintf(out, n, "%.2fHz", v); break;
         case kLfoWave: std::snprintf(out, n, "%s", kLfoWaves[std::clamp((int)std::lround(v), 0, 4)]); break;
         case kPoly: std::snprintf(out, n, "%s", v > 0.5f ? "POLY" : "MONO"); break;
         case kLegato: std::snprintf(out, n, "%s", v > 0.5f ? "ON" : "OFF"); break;
@@ -759,15 +923,14 @@ private:
         }
     }
 
-    // where a link's tag sits under its knob (false: not linked)
-    bool tagRect(const Ctl& c, int src, Rect& r) const
+    // where a link's tag sits under its control (false: not linked)
+    bool tagBox(const Ctl& c, int src, Box& r) const
     {
         const int d = destIndex(c.param);
         if (d < 0 || fValues[modParam(src, d)] == 0) return false;
         const bool both = fValues[modParam(0, d)] != 0 && fValues[modParam(1, d)] != 0;
-        const float w = 28, cx = c.x + c.w / 2;
-        const float x = both ? (src == 0 ? cx - w - 1 : cx + 1) : cx - w / 2;
-        r = {x, c.y + c.h - 17, w, 13};
+        const float w = 26, cx = c.x + c.w / 2;
+        r = {both ? (src == 0 ? cx - w - 1 : cx + 1) : cx - w / 2, c.y + c.h - 18, w, 13};
         return true;
     }
 
@@ -777,147 +940,53 @@ private:
         const Kind kind = kInfo[p].kind;
         const float cx = c.x + c.w / 2;
         char buf[48];
-        fontSize(9);
-        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-        fillColor(kLabel);
-        text(cx, c.y + 8, kInfo[p].caption, nullptr);
         valueText(p, buf, sizeof(buf));
         const int d = destIndex(p);
-        if (fLinkSrc >= 0 && d >= 0) {  // dragging a link: show where it can go
-            beginPath();
-            roundedRect(c.x + 3, c.y, c.w - 6, c.h - 3, 4);
-            strokeColor(Color(kSrcCol[fLinkSrc].red, kSrcCol[fLinkSrc].green, kSrcCol[fLinkSrc].blue, 0.6f));
-            strokeWidth(1);
-            stroke();
-        }
+        if (fLinkSrc >= 0 && d >= 0)  // dragging a link: show where it can go
+            outline({c.x + 2, c.y + 2, c.w - 4, c.h - 4}, Color(kSrcCol[fLinkSrc].red, kSrcCol[fLinkSrc].green, kSrcCol[fLinkSrc].blue, 0.7f));
+        const bool dim = (p == kAShape || p == kBShape) && slots(p == kBShape) < 2;  // one shape: nothing to morph
+        label(cx, c.y + 12, kInfo[p].caption, dim ? kFaint : kDim, 9.5f, ALIGN_CENTER | ALIGN_MIDDLE);
         if (kind == kSwitch) {
-            drawSwitch(cx, c.y + 34, fValues[p] > 0.5f);
-            fontSize(9);
-            fillColor(kAccent);
-            text(cx, c.y + 62, buf, nullptr);
+            const bool on = fValues[p] > 0.5f;
+            label(cx, c.y + 38, on ? "[x]" : "[ ]", kFg, 14, ALIGN_CENTER | ALIGN_MIDDLE);
+            label(cx, c.y + 62, buf, on ? kBright : kDim, 10, ALIGN_CENTER | ALIGN_MIDDLE);
             return;
         }
         if (kind == kChoice) {
-            const float dw = c.w - 12, dh = 22, cy = c.y + 38;
-            beginPath();
-            roundedRect(cx - dw / 2, cy - dh / 2, dw, dh, 3);
-            fillColor(Color(10, 12, 11));
-            fill();
-            strokeColor(Color(60, 62, 68));
-            stroke();
-            fontSize(10);
-            fillColor(kAccent);
-            text(cx, cy, buf, nullptr);
-            fontSize(8);
-            fillColor(kOff);
-            text(cx, c.y + 62, "< click >", nullptr);
+            label(cx, c.y + 38, (std::string("< ") + buf + " >").c_str(), kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
             return;
         }
-        const float r = 13, cy = c.y + 36;
+        // the bar: 8 cells, lit up to the setting
+        const int cells = 8;
+        const float bw = std::min(c.w - 10, 48.0f), bx = cx - bw / 2, by = c.y + 28, bh = 11;
         const float n = toNorm(p, fValues[p]);
-        drawKnob(cx, cy, r, n);
+        const float cw = bw / cells;
+        for (int i = 0; i < cells; ++i) {
+            const float f = std::clamp(n * cells - i, 0.0f, 1.0f);
+            fillBox({bx + i * cw + 0.5f, by, cw - 1, bh}, kFaint);
+            if (f > 0) fillBox({bx + i * cw + 0.5f, by, (cw - 1) * f, bh}, dim ? kDim : kFg);
+        }
         if (d >= 0) {
             bool linked = false;
             for (int src = 0; src < kNumSources; ++src) {
                 const float a = fValues[modParam(src, d)];
                 if (a == 0) continue;
                 linked = true;
-                // the ring: how far this link can move the knob (the LFO swings both ways)
+                // the range line: how far this link can move it (the LFO swings both ways)
                 const float lo = std::clamp(src == kSrcLfo ? n - std::fabs(a) : std::min(n, n + a), 0.0f, 1.0f);
                 const float hi = std::clamp(src == kSrcLfo ? n + std::fabs(a) : std::max(n, n + a), 0.0f, 1.0f);
-                arcRing(cx, cy, r + 7 + 3 * src, lo, hi, kSrcCol[src]);
-                Rect t{};
-                tagRect(c, src, t);
-                beginPath();
-                roundedRect(t.x, t.y, t.w, t.h, 3);
-                fillColor(Color(kSrcCol[src].red, kSrcCol[src].green, kSrcCol[src].blue, 0.25f));
-                fill();
-                strokeColor(kSrcCol[src]);
-                strokeWidth(1);
-                stroke();
+                fillBox({bx + bw * lo, by + bh + 3 + 4 * src, std::max(bw * (hi - lo), 1.0f), 2}, kSrcCol[src]);
+                Box t;
+                tagBox(c, src, t);
+                outline(t, kSrcCol[src]);
                 char tb[16];
                 std::snprintf(tb, sizeof(tb), "%c%+d", kSrcName[src][0], (int)std::lround(a * 100));
-                fontSize(8);
-                fillColor(kSrcCol[src]);
-                text(t.x + t.w / 2, t.y + t.h / 2, tb, nullptr);
+                label(t.x + t.w / 2, t.y + t.h / 2 + 0.5f, tb, kSrcCol[src], 8.5f, ALIGN_CENTER | ALIGN_MIDDLE);
             }
-            if (linked) {  // where the links have it right now
-                const float live = toNorm(p, liveValue(p));
-                const float ang = 0.75f * 3.14159265f + 1.5f * 3.14159265f * live;
-                beginPath();
-                circle(cx + std::cos(ang) * (r + 3), cy + std::sin(ang) * (r + 3), 2.2f);
-                fillColor(Color(255, 255, 255));
-                fill();
-            }
+            if (linked)  // where the links have it right now
+                fillBox({bx + bw * toNorm(p, liveValue(p)) - 1, by - 3, 2, bh + 6}, kBright);
         }
-        fontSize(8.5f);
-        fillColor(kLabel);
-        text(cx, c.y + 62, buf, nullptr);
-    }
-
-    void arcRing(float cx, float cy, float r, float lo, float hi, const Color& col)
-    {
-        if (hi - lo < 0.002f) return;
-        const float a0 = 0.75f * 3.14159265f, span = 1.5f * 3.14159265f;
-        beginPath();
-        arc(cx, cy, r, a0 + span * lo, a0 + span * hi, CW);
-        strokeColor(col);
-        strokeWidth(2);
-        lineCap(ROUND);
-        stroke();
-        lineCap(BUTT);
-    }
-
-    // a dial: dark knob, a lit arc showing the setting, a pointer
-    void drawKnob(float cx, float cy, float r, float n)
-    {
-        const float a0 = 0.75f * 3.14159265f, a1 = 2.25f * 3.14159265f;
-        const float a = a0 + (a1 - a0) * n;
-        lineCap(ROUND);
-        beginPath();
-        arc(cx, cy, r + 3.5f, a0, a1, CW);
-        strokeColor(Color(50, 53, 58));
-        strokeWidth(2.5f);
-        stroke();
-        if (n > 0.002f) {
-            beginPath();
-            arc(cx, cy, r + 3.5f, a0, a, CW);
-            strokeColor(kAccent);
-            strokeWidth(2.5f);
-            stroke();
-        }
-        beginPath();
-        circle(cx, cy, r);
-        fillPaint(radialGradient(cx - r * 0.3f, cy - r * 0.4f, r * 0.1f, r * 1.2f, Color(78, 80, 86), Color(26, 27, 30)));
-        fill();
-        strokeColor(Color(12, 12, 14));
-        strokeWidth(1);
-        stroke();
-        beginPath();
-        moveTo(cx + std::cos(a) * r * 0.25f, cy + std::sin(a) * r * 0.25f);
-        lineTo(cx + std::cos(a) * r * 0.85f, cy + std::sin(a) * r * 0.85f);
-        strokeColor(Color(225, 228, 222));
-        strokeWidth(2);
-        stroke();
-        lineCap(BUTT);
-    }
-
-    // a slide switch: the lever sits right and lights up when on
-    void drawSwitch(float cx, float cy, bool on)
-    {
-        const float w = 34, h = 16;
-        beginPath();
-        roundedRect(cx - w / 2, cy - h / 2, w, h, h / 2);
-        fillColor(on ? Color(kAccent.red, kAccent.green, kAccent.blue, 0.35f) : Color(12, 13, 15));
-        fill();
-        strokeColor(on ? kAccent : Color(60, 62, 68));
-        strokeWidth(1);
-        stroke();
-        const float kx = on ? cx + w / 2 - h / 2 : cx - w / 2 + h / 2;
-        beginPath();
-        circle(kx, cy, h / 2 - 2);
-        fillPaint(radialGradient(kx - 2, cy - 2, 1, h / 2, Color(235, 236, 232), Color(150, 152, 150)));
-        fill();
+        label(cx, c.y + 60, buf, dim ? kFaint : kBright, 10, ALIGN_CENTER | ALIGN_MIDDLE);
     }
 
     // testing hook: the frame just drawn

@@ -498,7 +498,7 @@ int main(int argc, char** argv)
     static Handler handler;
     v3_cpp_obj(ctrl)->set_component_handler(ctrl, (v3_component_handler**)&handler);
     const int nParams = v3_cpp_obj(ctrl)->get_parameter_count(ctrl);
-    const int base = nParams - 46;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
+    const int base = nParams - 66;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
     std::printf("parameters: %d (synth's own from %d)\n", nParams, base);
 
     v3_audio_processor** proc = nullptr;
@@ -595,7 +595,7 @@ int main(int argc, char** argv)
     CHECK(child, "plugin child window");
     RECT cr;
     GetClientRect(child, &cr);
-    const double sc = cr.right / 960.0;  // the window's layout is 960 wide
+    const double sc = cr.right / 1020.0;  // the window's layout is 1020 wide
     auto X = [&](double x) { return (int)std::lround(x * sc); };
     std::printf("window open (scale %.2f)\n", sc);
 
@@ -604,20 +604,20 @@ int main(int argc, char** argv)
 
     // ---- a chord from the "piano roll"
     midi(60, 100); midi(64, 100); midi(67, 100);
-    const float chord = peakSince(2.5);  // the 3 s snapshot lands here
+    float chord = 0; for (int i = 0; i < 5; ++i) { const float pk = peakSince(0.5); chord = std::max(chord, pk); std::printf("  chord %.1fs: %.3f\n", 0.5 * i, pk); }
     std::printf("C major chord: peak %.3f\n", chord);
 
     // ---- link the LFO to OSC A's ROTATE knob: drag its handle onto the knob
-    drag(child, X(909), X(3 * 110 + 26 + 38), X(572 + 4 * 64 + 32), X(18 + 36));
+    drag(child, X(967), X(451), X(868), X(50));
     std::printf("LFO dragged onto ROTATE: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
-    const bool linked = gLastParam == base + 22 + 12 + 3 && std::fabs(gLastValue - 0.75) < 1e-3;  // LFO > A Rotate = +50%
-    pump(3.0);  // the 7 s snapshot: the shape spinning
+    const bool linked = gLastParam == base + 42 + 12 + 3 && std::fabs(gLastValue - 0.75) < 1e-3;  // LFO > A Rotate = +50%
+    for (int i = 0; i < 6; ++i) std::printf("  after link %.1fs: %.3f\n", 0.5 * i, peakSince(0.5));
     midi(60, 0); midi(64, 0); midi(67, 0);
     const float after = peakSince(0.6), released = peakSince(1.0);
     std::printf("after letting go: %.3f, then %.4f\n", after, released);
 
     // ---- play the on-screen keyboard: C4 (white key 14 from C2), held for 4 s
-    const int keyX = X(14.5 * 960 / 29), keyY = X(625);
+    const int keyX = X(21.5 * 1020 / 50), keyY = X(690);  // C4: 21 white keys up from C1
     PostMessageA(child, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(keyX, keyY));
     const float key = peakSince(4.0);  // the 13 s snapshot: C4 lit up
     PostMessageA(child, WM_LBUTTONUP, 0, MAKELPARAM(keyX, keyY));
@@ -625,13 +625,34 @@ int main(int argc, char** argv)
     std::printf("on-screen key C4: peak %.3f, after letting go %.4f\n", key, keyOff);
 
     // ---- POLY -> MONO, then two overlapping notes play as one voice
-    click(child, X(8 + 45), X(440 + 34));
+    click(child, X(8 + 45), X(500 + 38));
     std::printf("POLY switch: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
-    const bool mono = gLastParam == base + 18 && gLastValue == 0;
+    const bool mono = gLastParam == base + 20 && gLastValue == 0;
     // ---- turn up OSC B's LEVEL
-    drag(child, X(892 + 32), X(110 + 18 + 36), X(892 + 32), X(110 + 18 + 36 - 80));
+    drag(child, X(924), X(189), X(924), X(189 - 80));
     std::printf("OSC B LEVEL dragged up: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
-    const bool levelUp = gLastParam == base + 11 && gLastValue > 0.3;
+    const bool levelUp = gLastParam == base + 12 && gLastValue > 0.3;
+    // ---- type a shape: NEW f(t) on OSC A, x = sin(5t), y = cos(4t), Enter
+    click(child, X(897), X(122));
+    auto press = [&](WPARAM vk) { PostMessageA(child, WM_KEYDOWN, vk, 0); PostMessageA(child, WM_KEYUP, vk, 0xC0000001); pump(0.05); };
+    auto type = [&](const char* t) { for (; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); } };
+    type("sin(5tx"); press(VK_BACK); type(")"); press(VK_TAB); type("cos(4t)");  // Backspace takes the x back out
+    pump(0.5);  // the 13 s snapshot may land around here
+    press(VK_RETURN);
+    pump(0.5);
+    click(child, X(696), X(122));  // +: a second slot on OSC A
+    Stream st;
+    v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&st);
+    const std::string blob(st.data.begin(), st.data.end());
+    // the typed shape is saved with the project; + is an automatable parameter (A Shapes: 1 -> 2 of 1..8)
+    const bool typed = blob.find("C sin(5t) | cos(4t)") != std::string::npos;
+    const bool slotAdded = gLastParam == base + 24 && std::fabs(gLastValue - 1.0 / 7) < 1e-6;
+    std::printf("typed shape saved: %s, + slot -> param %d = %.3f\n", typed ? "yes" : "NO", gLastParam.load(), gLastValue.load());
+    if (!typed) {
+        std::string shown = blob;
+        for (char& ch : shown) if (ch == 0) ch = '~';
+        std::printf("state: %s\n", shown.c_str());
+    }
     midi(48, 110); pump(0.3); midi(55, 110);
     const float monoPk = peakSince(4.0);  // the 19.5 s snapshot
     midi(48, 0); midi(55, 0);
@@ -668,6 +689,8 @@ int main(int argc, char** argv)
     CHECK(mono, "the POLY switch should go to MONO");
     CHECK(levelUp, "dragging OSC B LEVEL up should raise it");
     CHECK(monoPk > 0.05f, "MONO notes make sound");
+    CHECK(typed, "a typed shape should be saved with the project");
+    CHECK(slotAdded, "+ should add a slot through the A Shapes parameter");
     std::printf("ALL OK\n");
     return 0;
 }

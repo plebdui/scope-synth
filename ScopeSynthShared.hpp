@@ -5,6 +5,8 @@
 #include "DistrhoPlugin.hpp"
 #include "SynthEngine.hpp"
 #include <atomic>
+#include <memory>
+#include <mutex>
 
 START_NAMESPACE_DISTRHO
 
@@ -84,12 +86,20 @@ protected:
     void setParameterValue(uint32_t index, float value) override;
     void activate() override;
     void sampleRateChanged(double newSampleRate) override;
+    void initState(uint32_t index, State& state) override;
+    void setState(const char* key, const char* value) override;
     void run(const float** inputs, float** outputs, uint32_t frames,
              const MidiEvent* midiEvents, uint32_t midiEventCount) override;
 
 private:
     float fParams[ss::kParamCount];
     ss::Engine fEngine{fParams};
+    // the shapes, built off the audio thread and handed over through fShapes.
+    // The one before stays alive until the next change, in case the audio
+    // thread is still finishing a block with it.
+    std::atomic<ss::ShapeSet*> fShapes{nullptr};
+    std::unique_ptr<ss::ShapeSet> fShapesCur, fShapesOld;
+    std::mutex fShapesLock;
     void handleMidi(const uint8_t* data, uint32_t size);
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ScopeSynthPlugin)
 };

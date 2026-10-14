@@ -6,12 +6,22 @@
 
 using namespace ss;
 static float P[kParamCount];
+static ShapeSet gSet;
 static int fails = 0;
 #define EXPECT(c, ...) do { std::printf("%s: ", (c) ? "ok  " : "FAIL"); std::printf(__VA_ARGS__); std::printf("\n"); if (!(c)) ++fails; } while (0)
+
+// an oscillator's shape list, as the slot parameters
+static void slotsOf(int o, std::initializer_list<int> ids)
+{
+    int i = 0;
+    for (int id : ids) P[slotParam(o, i++)] = (float)id;
+    P[slotsParam(o)] = (float)i;
+}
 
 static void defaults()
 {
     for (int p = 0; p < kParamCount; ++p) P[p] = paramDefault(p);
+    gSet = ShapeSet();
 }
 
 // frequency of the left channel from its strongest repeat (autocorrelation)
@@ -37,7 +47,7 @@ static std::vector<float> run(Engine& e, int frames, std::vector<float>* right =
     std::vector<float> l(frames), r(frames);
     for (int i = 0; i < frames; i += 512) {
         const int m = std::min(512, frames - i);
-        e.render(&l[i], &r[i], m);
+        e.render(&l[i], &r[i], m, gSet);
     }
     if (right) *right = r;
     return l;
@@ -55,7 +65,7 @@ int main()
     const float sr = 48000;
     for (int eq = 0; eq < crt::kNumEquations; ++eq) {
         defaults();
-        P[kAShape] = (float)eq;
+        slotsOf(0, {eq});
         Engine e(P);
         e.setSampleRate(sr);
         e.noteOn(57, 100);  // A3 = 220 Hz
@@ -136,20 +146,20 @@ int main()
         std::vector<float> l(2400);
         run(e, 0);
         std::vector<float> r(2400);
-        e.render(l.data(), r.data(), 2400);
+        e.render(l.data(), r.data(), 2400, gSet);
         // count rising zero crossings in the first 50 ms vs a plain note
         auto cross = [](const std::vector<float>& x) { int c = 0; for (size_t i = 1; i < x.size(); ++i) c += x[i - 1] < 0 && x[i] >= 0; return c; };
         P[modParam(kSrcEnv, destIndex(kASemi))] = 0;
         Engine plain(P); plain.setSampleRate(sr);
         plain.noteOn(57, 127);
         std::vector<float> l2(2400), r2(2400);
-        plain.render(l2.data(), r2.data(), 2400);
+        plain.render(l2.data(), r2.data(), 2400, gSet);
         EXPECT(cross(l) > cross(l2) * 1.5, "ENV -> SEMI raises the pitch at the start (%d vs %d crossings)", cross(l), cross(l2));
         P[kSustain] = paramDefault(kSustain); P[kDecay] = paramDefault(kDecay);
     }
     {
         // LFO linked to ROTATE: the shape turns, so left/right energy trades places over time
-        P[modParam(kSrcLfo, destIndex(kARot))] = 0.5f; P[kLfoRate] = 1; P[kAShape] = 5;  // infinity: wide, flat
+        P[modParam(kSrcLfo, destIndex(kARot))] = 0.5f; P[kLfoRate] = 1; slotsOf(0, {5});  // infinity: wide, flat
         Engine e(P); e.setSampleRate(sr);
         e.noteOn(57, 127);
         std::vector<float> r;
@@ -162,11 +172,15 @@ int main()
             lo = std::min(lo, ratio); hi = std::max(hi, ratio);
         }
         EXPECT(hi / lo > 3, "LFO -> ROTATE spins the shape (L/R energy ratio %.2f .. %.2f)", lo, hi);
-        P[modParam(kSrcLfo, destIndex(kARot))] = 0; P[kAShape] = 0;
+        P[modParam(kSrcLfo, destIndex(kARot))] = 0; slotsOf(0, {0});
     }
     {
         // both oscillators, 16 voices of an animated curve: how long it takes
-        P[kAShape] = 10; P[kBShape] = 6.5f; P[kBLevel] = 0.6f;
+        slotsOf(0, {10}); slotsOf(1, {6, 7, 9}); P[kBShape] = 0.3f; P[kBLevel] = 0.6f;
+        gSet.customs.resize(1);
+        gSet.customs[0].xs = "sin(3t + u)"; gSet.customs[0].ys = "cos(5t)";
+        gSet.customs[0].compile(); gSet.customs[0].build();
+        slotsOf(0, {10, 11});
         P[modParam(kSrcLfo, destIndex(kAShape))] = 0.2f;
         Engine e(P); e.setSampleRate(sr);
         for (int n = 40; n < 56; ++n) e.noteOn(n, 100);
@@ -174,6 +188,73 @@ int main()
         auto l = run(e, 48000 * 4);
         const float secs = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
         EXPECT(secs < 0.4f && peak(l) <= 1.0f, "16 voices x 2 oscillators, 4 s of sound in %.0f ms (%.1f%% of one core)", secs * 1000, secs / 4 * 100);
+    }
+    {
+        // VOICES: 8 detuned copies, still in key, about as loud, and the shape drifts
+        defaults();
+        P[kAVoices] = 8;
+        Engine e(P); e.setSampleRate(sr);
+        e.noteOn(57, 127);
+        std::vector<float> r;
+        auto l = run(e, 48000, &r);
+        for (size_t i = 0; i < l.size(); ++i) r[i] += l[i];
+        const float f = pitchOf(r, sr);
+        EXPECT(std::fabs(f / 220 - 1) < 0.02f && peak(l) > 0.1f && peak(l) <= 1.0f, "VOICES 8: A3 at %.1f Hz, peak %.2f", f, peak(l));
+        // worst case: 16 notes, both oscillators, 8 voices each
+        P[kBLevel] = 0.6f; P[kBVoices] = 8;
+        Engine w(P); w.setSampleRate(sr);
+        for (int n = 40; n < 56; ++n) w.noteOn(n, 100);
+        const auto t0 = std::chrono::steady_clock::now();
+        auto big = run(w, 48000 * 2);
+        const float secs = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        EXPECT(secs < 1.0f && peak(big) <= 1.0f, "16 notes x 2 oscillators x 8 voices: 2 s of sound in %.0f ms (%.0f%% of one core)", secs * 1000, secs / 2 * 100);
+    }
+    {
+        // typed equations
+        Expr x;
+        EXPECT(x.compile("sin(3t) + 0.5cos(2*t)^2").empty() && std::fabs(x.eval(1, 0) - (std::sin(3) + 0.5 * std::pow(std::cos(2), 2))) < 1e-9,
+               "equation: sin(3t) + 0.5cos(2*t)^2 reads right");
+        EXPECT(x.compile("-2^2").empty() && x.eval(0, 0) == -4, "equation: -2^2 = -4");
+        EXPECT(x.compile("max(t, u) * pi").empty() && x.animated() && std::fabs(x.eval(1, 2) - 2 * M_PI) < 1e-9, "equation: max(t, u) * pi, uses u so it moves");
+        const char* bad[] = {"sin(t", "foo(t)", "3 +", "max(t)", "t $ 2", ""};
+        for (const char* b : bad) {
+            const std::string err = x.compile(b);
+            EXPECT(!err.empty(), "equation: \"%s\" refused (%s)", b, err.c_str());
+        }
+        // a typed shape plays in key
+        defaults();
+        gSet.customs.resize(1);
+        gSet.customs[0].xs = "sin(t) + 0.3sin(3t)"; gSet.customs[0].ys = "cos(2t)";
+        EXPECT(gSet.customs[0].compile().empty(), "custom shape compiles");
+        gSet.customs[0].build();
+        slotsOf(0, {crt::kNumEquations});
+        Engine e(P); e.setSampleRate(sr);
+        e.noteOn(57, 127);
+        std::vector<float> r;
+        auto l = run(e, 48000, &r);
+        for (size_t i = 0; i < l.size(); ++i) r[i] += l[i];
+        EXPECT(std::fabs(pitchOf(r, sr) / 220 - 1) < 0.02f && peak(l) > 0.2f, "MY SHAPE 1 at A3: %.1f Hz, peak %.2f", pitchOf(r, sr), peak(l));
+        // save and load
+        ShapeSet back;
+        back.load(gSet.save());
+        EXPECT(back.save() == gSet.save() && back.customs.size() == 1 && back.custom(crt::kNumEquations).X == gSet.custom(crt::kNumEquations).X,
+               "typed shapes saved and loaded back: %s", back.save().c_str());
+        // MORPH through a playlist: half way between HEART and CUBE is neither
+        defaults();
+        slotsOf(0, {1, 10});
+        auto energy = [&](float morph) {
+            P[kAShape] = morph;
+            Engine m(P); m.setSampleRate(sr);
+            m.noteOn(57, 127);
+            std::vector<float> rr;
+            auto ll = run(m, 24000, &rr);
+            double el = 0;
+            for (int i = 12000; i < 24000; ++i) el += ll[i] * rr[i];
+            return el / 12000;
+        };
+        const double h = energy(0), c = energy(1), half = energy(0.5f);
+        EXPECT(std::fabs(h - c) > 1e-4 && std::fabs(half - h) > 1e-5 && std::fabs(half - c) > 1e-5,
+               "MORPH 0 / 50%% / 100%% through HEART > CUBE all differ (L*R %.4f %.4f %.4f)", h, half, c);
     }
     std::printf(fails ? "%d FAILED\n" : "ALL OK\n", fails);
     return fails != 0;
