@@ -1,0 +1,119 @@
+#include "ScopeSynthShared.hpp"
+
+START_NAMESPACE_DISTRHO
+
+ScopeSynthPlugin::ScopeSynthPlugin()
+    : Plugin(ss::kParamCount, 0, 0)
+{
+    for (int p = 0; p < ss::kParamCount; ++p)
+        fParams[p] = ss::paramDefault(p);
+    fEngine.setSampleRate((float)getSampleRate());
+}
+
+void ScopeSynthPlugin::initAudioPort(bool input, uint32_t index, AudioPort& port)
+{
+    port.groupId = kPortGroupStereo;
+    Plugin::initAudioPort(input, index, port);
+}
+
+void ScopeSynthPlugin::initParameter(uint32_t index, Parameter& p)
+{
+    using namespace ss;
+    p.hints = kParameterIsAutomatable;
+    p.ranges.min = paramMin(index);
+    p.ranges.max = paramMax(index);
+    p.ranges.def = paramDefault(index);
+    if (index >= (uint32_t)kModBase) {  // ENV / LFO link amounts
+        const int src = (index - kModBase) / kNumDests, d = (index - kModBase) % kNumDests;
+        p.name = String(src == kSrcEnv ? "ENV > " : "LFO > ") + kInfo[kDests[d]].name;
+        p.symbol = String(src == kSrcEnv ? "env_" : "lfo_") + kInfo[kDests[d]].symbol;
+        return;
+    }
+    const ParamInfo& in = kInfo[index];
+    p.name = in.name;
+    p.symbol = in.symbol;
+    p.unit = in.unit;
+    if (in.curve == kLog) p.hints |= kParameterIsLogarithmic;
+    if (in.kind == kInt || in.kind == kChoice) p.hints |= kParameterIsInteger;
+    if (in.kind == kSwitch) p.hints |= kParameterIsBoolean | kParameterIsInteger;
+    if (index == kLfoWave) {
+        static ParameterEnumerationValue v[5];
+        for (int i = 0; i < 5; ++i) { v[i].value = (float)i; v[i].label = kLfoWaves[i]; }
+        p.enumValues.count = 5; p.enumValues.restrictedMode = true; p.enumValues.values = v;
+        p.enumValues.deleteLater = false;
+    }
+    if (index == kPoly) {
+        static ParameterEnumerationValue v[2] = {{0, "Mono"}, {1, "Poly"}};
+        p.enumValues.count = 2; p.enumValues.restrictedMode = true; p.enumValues.values = v;
+        p.enumValues.deleteLater = false;
+    }
+}
+
+float ScopeSynthPlugin::getParameterValue(uint32_t index) const
+{
+    return index < (uint32_t)ss::kParamCount ? fParams[index] : 0.0f;
+}
+
+void ScopeSynthPlugin::setParameterValue(uint32_t index, float value)
+{
+    if (index < (uint32_t)ss::kParamCount)
+        fParams[index] = value;
+}
+
+void ScopeSynthPlugin::activate()
+{
+    fEngine.setSampleRate((float)getSampleRate());
+}
+
+void ScopeSynthPlugin::sampleRateChanged(double newSampleRate)
+{
+    fEngine.setSampleRate((float)newSampleRate);
+}
+
+void ScopeSynthPlugin::handleMidi(const uint8_t* d, uint32_t size)
+{
+    if (size < 2) return;
+    const uint8_t status = d[0] & 0xF0;
+    if (status == 0x90 && size >= 3) fEngine.noteOn(d[1], d[2]);
+    else if (status == 0x80 && size >= 3) fEngine.noteOff(d[1]);
+    else if (status == 0xE0 && size >= 3) fEngine.pitchBend(((d[2] << 7 | d[1]) - 8192) / 8192.0f * 2);  // +-2 semitones
+    else if (status == 0xB0 && size >= 3 && (d[1] == 120 || d[1] == 123)) fEngine.allOff(d[1] == 120);
+}
+
+void ScopeSynthPlugin::run(const float**, float** outputs, uint32_t frames,
+                           const MidiEvent* midiEvents, uint32_t midiEventCount)
+{
+    float* L = outputs[0];
+    float* R = outputs[1];
+    uiNotes.drain([this](int note, int vel) { vel ? fEngine.noteOn(note, vel) : fEngine.noteOff(note); });
+    uint32_t done = 0;
+    for (uint32_t e = 0; e <= midiEventCount; ++e) {  // play up to each note, right on its sample
+        const uint32_t at = e < midiEventCount ? std::min(midiEvents[e].frame, frames) : frames;
+        if (at > done) {
+            fEngine.render(L + done, R + done, at - done);
+            done = at;
+        }
+        if (e < midiEventCount)
+            handleMidi(midiEvents[e].size > MidiEvent::kDataSize ? midiEvents[e].dataExt : midiEvents[e].data,
+                       midiEvents[e].size);
+    }
+    ring.write(L, R, frames);
+    live.env.store(fEngine.envNow(), std::memory_order_relaxed);
+    live.lfo.store(fEngine.lfoNow(), std::memory_order_relaxed);
+    live.note.store(fEngine.newestNote(), std::memory_order_relaxed);
+    live.pitch.store(fEngine.newestPitch(), std::memory_order_relaxed);
+    live.voices.store(fEngine.activeVoices(), std::memory_order_relaxed);
+    live.anim.store(fEngine.animTime(), std::memory_order_relaxed);
+    uint64_t k[2] = {0, 0};
+    for (int n = 0; n < 128; ++n)
+        if (fEngine.keyDown(n)) k[n >> 6] |= 1ull << (n & 63);
+    live.keys[0].store(k[0], std::memory_order_relaxed);
+    live.keys[1].store(k[1], std::memory_order_relaxed);
+}
+
+Plugin* createPlugin()
+{
+    return new ScopeSynthPlugin();
+}
+
+END_NAMESPACE_DISTRHO
