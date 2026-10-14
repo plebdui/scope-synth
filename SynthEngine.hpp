@@ -215,6 +215,7 @@ private:
         uint64_t order = 0;
         double ph[2][kMaxUnison] = {};
         float lv[2] = {0, 0}, cs[2] = {1, 1}, sn[2] = {0, 0};  // last level and rotation, ramped from
+        float f1[2][2] = {}, f2[2][2] = {};  // filter state: [stage][x, y] (two stages for LP24)
     };
 
     const float* P;
@@ -279,6 +280,23 @@ private:
         v.lv[0] = v.lv[1] = 0;
         v.cs[0] = v.cs[1] = 1;
         v.sn[0] = v.sn[1] = 0;
+        std::memset(v.f1, 0, sizeof(v.f1));
+        std::memset(v.f2, 0, sizeof(v.f2));
+    }
+
+    // One state-variable filter step (Cytomic's trapezoidal SVF), for x or y.
+    // Returns low, band and high pass outputs.
+    static void svf(float in, float g, float k, float& s1, float& s2, float& lp, float& bp, float& hp)
+    {
+        const float a1 = 1 / (1 + g * (g + k)), a2 = g * a1, a3 = g * a2;
+        const float v3 = in - s2;
+        const float v1 = a1 * s1 + a2 * v3;
+        const float v2 = s2 + a2 * s1 + a3 * v3;
+        s1 = 2 * v1 - s1;
+        s2 = 2 * v2 - s2;
+        lp = v2;
+        bp = v1;
+        hp = in - k * v1 - v2;
     }
 
     // a free voice, else the quietest one letting go, else the oldest
@@ -373,6 +391,13 @@ private:
                 sn[o] = std::sin(rot);
             }
 
+            // the filter for this note: cutoff and resonance as the links set them now
+            const int ftype = std::clamp((int)std::lround(P[kFilterType]), 0, 4);
+            const float cutoff = std::min(modulated(kCutoff, env, lfoVal), 0.45f * sr);
+            const float res = std::clamp(modulated(kRes, env, lfoVal), 0.0f, 1.0f);
+            const float fg = std::tan(3.14159265f * cutoff / sr);
+            const float fk = 1.414f - 1.38f * res;  // 0 = gentle, 1 = nearly singing
+
             for (uint32_t j = 0; j < m; ++j) {
                 // the envelope, every sample
                 if (v.stage == 0) {
@@ -407,6 +432,27 @@ private:
                     const float c = v.cs[o] + (cs[o] - v.cs[o]) * k, s = v.sn[o] + (sn[o] - v.sn[o]) * k;
                     sx += (x * c - y * s) * level;
                     sy += (x * s + y * c) * level;
+                }
+                {
+                    float* in[2] = {&sx, &sy};
+                    for (int ch = 0; ch < 2; ++ch) {
+                        float lp, bp, hp;
+                        svf(*in[ch], fg, fk, v.f1[0][ch], v.f1[1][ch], lp, bp, hp);
+                        float out;
+                        switch (ftype) {
+                        case 1: {  // LP24: a second, plain low-pass after the resonant one
+                            float lp2, bp2, hp2;
+                            svf(lp, fg, 1.414f, v.f2[0][ch], v.f2[1][ch], lp2, bp2, hp2);
+                            out = lp2;
+                            break;
+                        }
+                        case 2: out = hp; break;
+                        case 3: out = bp * fk; break;  // band-pass, peak at 0 dB
+                        case 4: out = lp + hp; break;  // notch
+                        default: out = lp; break;
+                        }
+                        *in[ch] = out;
+                    }
                 }
                 L[j] += sx * v.env;
                 R[j] += sy * v.env;

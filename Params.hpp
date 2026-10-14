@@ -19,18 +19,29 @@ enum Param {
     kLfoRate, kLfoWave,                                  // LFO
     kPoly, kLegato, kGlide, kVolume,                     // voice / master
     kASlots, kASlot0, kBSlots = kASlot0 + kMaxSlots, kBSlot0,  // each oscillator's shape list (parameters, so they can be automated)
-    kModBase = kBSlot0 + kMaxSlots,                      // then ENV -> each destination, then LFO -> each
+    kModBase = kBSlot0 + kMaxSlots,                      // then ENV -> each of the first 12 destinations, then LFO -> each
+    kFilterType = kModBase + 2 * 12, kCutoff, kRes,      // added in 1.1 (after the 1.0 ones, so 1.0 projects still load)
+    kModBase2,                                           // ENV, LFO -> each destination added since 1.0, a pair each
 };
 
 // knobs the ENV and LFO can be linked to
 static const int kDests[] = {kAShape, kASemi, kAFine, kARot, kALevel,
-                             kBShape, kBSemi, kBFine, kBRot, kBLevel, kLfoRate, kVolume};
-static constexpr int kNumDests = sizeof(kDests) / sizeof(kDests[0]);
+                             kBShape, kBSemi, kBFine, kBRot, kBLevel, kLfoRate, kVolume,
+                             kCutoff, kRes};
+static constexpr int kNumDests = sizeof(kDests) / sizeof(kDests[0]), kDests1 = 12;
 enum Source { kSrcEnv = 0, kSrcLfo = 1, kNumSources = 2 };
-static constexpr int kParamCount = kModBase + kNumSources * kNumDests;
+static constexpr int kParamCount = kModBase2 + kNumSources * (kNumDests - kDests1);
 
 // the parameter holding how much `src` moves destination number `d` (-1..1 of the knob's travel)
-inline int modParam(int src, int d) { return kModBase + src * kNumDests + d; }
+inline int modParam(int src, int d) { return d < kDests1 ? kModBase + src * kDests1 + d : kModBase2 + (d - kDests1) * 2 + src; }
+// the other way: is p a link amount, and which
+inline bool modOf(int p, int& src, int& d)
+{
+    if (p >= kModBase && p < kFilterType) { src = (p - kModBase) / kDests1; d = (p - kModBase) % kDests1; return true; }
+    if (p >= kModBase2 && p < kParamCount) { src = (p - kModBase2) % 2; d = kDests1 + (p - kModBase2) / 2; return true; }
+    return false;
+}
+inline bool isMod(int p) { int s, d; return modOf(p, s, d); }
 // destination number of a parameter, or -1 if it can't be linked
 inline int destIndex(int p)
 {
@@ -52,7 +63,7 @@ struct ParamInfo {
     Kind kind;
 };
 
-static const ParamInfo kInfo[kModBase] = {
+static const ParamInfo kInfo[kModBase2] = {
     {"A Morph", "a_morph", "MORPH", "%", 0, 1, 0, kLin, kKnob},
     {"A Octave", "a_oct", "OCT", "", -3, 3, 0, kLin, kInt},
     {"A Semi", "a_semi", "SEMI", "st", -12, 12, 0, kLin, kInt},
@@ -95,9 +106,25 @@ static const ParamInfo kInfo[kModBase] = {
     {"B Slot 6", "b_slot6", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
     {"B Slot 7", "b_slot7", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
     {"B Slot 8", "b_slot8", "SLOT", "", 0, kMaxShapes - 1, 0, kLin, kChoice},
+    // placeholders for the ENV / LFO amounts of the first 12 destinations (info() gives their range)
+#define SS_MOD {"", "", "", "", -1, 1, 0, kLin, kKnob}
+    SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD,
+    SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD, SS_MOD,
+#undef SS_MOD
+    {"Filter Type", "filter_type", "TYPE", "", 0, 4, 0, kLin, kChoice},
+    {"Cutoff", "cutoff", "CUTOFF", "Hz", 20, 20000, 20000, kLog, kKnob},
+    {"Resonance", "res", "RES", "%", 0, 1, 0, kLin, kKnob},
 };
 
 static const char* const kLfoWaves[5] = {"SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"};
+static const char* const kFilterTypes[5] = {"LP12", "LP24", "HP", "BP", "NOTCH"};
+
+// any parameter's range and kind (link amounts: -1..1)
+inline const ParamInfo& info(int p)
+{
+    static const ParamInfo mod = {"", "", "", "", -1, 1, 0, kLin, kKnob};
+    return isMod(p) || p < 0 || p >= kModBase2 ? mod : kInfo[p];
+}
 
 // an oscillator's shape list, read from the parameters
 inline int slotsParam(int o) { return o ? kBSlots : kASlots; }
@@ -108,15 +135,15 @@ inline int slotShape(const float* P, int o, int i, int shapes)  // shapes: how m
     return std::clamp((int)std::lround(P[slotParam(o, i)]), 0, shapes - 1);
 }
 
-inline float paramMin(int p) { return p < kModBase ? kInfo[p].min : -1.0f; }
-inline float paramMax(int p) { return p < kModBase ? kInfo[p].max : 1.0f; }
-inline float paramDefault(int p) { return p < kModBase ? kInfo[p].def : 0.0f; }
+inline float paramMin(int p) { return info(p).min; }
+inline float paramMax(int p) { return info(p).max; }
+inline float paramDefault(int p) { return info(p).def; }
 
 // value <-> position on the knob (0..1)
 inline float toNorm(int p, float v)
 {
     const float lo = paramMin(p), hi = paramMax(p);
-    const Curve c = p < kModBase ? kInfo[p].curve : kLin;
+    const Curve c = info(p).curve;
     float n;
     if (c == kLog)
         n = std::log(std::max(v, lo) / lo) / std::log(hi / lo);
@@ -130,7 +157,7 @@ inline float fromNorm(int p, float n)
 {
     n = std::clamp(n, 0.0f, 1.0f);
     const float lo = paramMin(p), hi = paramMax(p);
-    const Curve c = p < kModBase ? kInfo[p].curve : kLin;
+    const Curve c = info(p).curve;
     if (c == kLog) return lo * std::pow(hi / lo, n);
     if (c == kSquare) return lo + (hi - lo) * n * n;
     return lo + (hi - lo) * n;

@@ -21,6 +21,12 @@ fast the beam goes round. The tube shows exactly what you hear.
 - **Linking, like Serum:** drag the ENV or LFO handle onto a control. It gets a
   coloured range line and a tag; drag the tag up/down to set how much
   (negative works too), right-click it to unlink.
+- **FILTER** per note: LP12, LP24, HP, BP, NOTCH, with CUTOFF and RES (both
+  linkable, so the ENV can sweep every note), and a live response graph.
+- **Presets** in the menu bar: `<` `>` step through them, click the name for the
+  list (BASS, LEAD, SYNTH, PLUCK, PAD, FX, ARP, KEYS, BELLS).
+- **Themes** (the gear, top right): GREEN, AMBER, CYAN, WHITE, PINK. The scope's
+  phosphor changes to match. Your pick is remembered for every copy of the plugin.
 - **POLY / MONO** (16 notes), **LEGATO** (mono: overlapping notes don't restart
   the envelope and glide only between them), **GLIDE**, **VOLUME**.
 - **Keyboard** along the bottom: click to play (lower on a key = harder),

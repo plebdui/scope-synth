@@ -498,7 +498,7 @@ int main(int argc, char** argv)
     static Handler handler;
     v3_cpp_obj(ctrl)->set_component_handler(ctrl, (v3_component_handler**)&handler);
     const int nParams = v3_cpp_obj(ctrl)->get_parameter_count(ctrl);
-    const int base = nParams - 66;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
+    const int base = nParams - 73;  // DPF puts its MIDI CC slots (pitch bend, mod wheel...) before the synth's own
     std::printf("parameters: %d (synth's own from %d)\n", nParams, base);
 
     v3_audio_processor** proc = nullptr;
@@ -597,8 +597,12 @@ int main(int argc, char** argv)
     GetClientRect(child, &cr);
     const double sc = cr.right / 1020.0;  // the window's layout is 1020 wide
     auto X = [&](double x) { return (int)std::lround(x * sc); };
+    auto Y = [&](double y) { return X(y + 28); };  // under the 28-high menu bar
     std::printf("window open (scale %.2f)\n", sc);
 
+    // ---- the theme menu: the gear, then AMBER (row 2 under its title)
+    click(child, X(1020 - 21), X(14));
+    click(child, X(900), X(28 + 4 + 2 * 16 + 8));
     const float quiet = peakSince(1.0);
     std::printf("before any note: peak %.4f\n", quiet);
 
@@ -608,7 +612,7 @@ int main(int argc, char** argv)
     std::printf("C major chord: peak %.3f\n", chord);
 
     // ---- link the LFO to OSC A's ROTATE knob: drag its handle onto the knob
-    drag(child, X(967), X(451), X(868), X(50));
+    drag(child, X(967), Y(451), X(868), Y(50));
     std::printf("LFO dragged onto ROTATE: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
     const bool linked = gLastParam == base + 42 + 12 + 3 && std::fabs(gLastValue - 0.75) < 1e-3;  // LFO > A Rotate = +50%
     for (int i = 0; i < 6; ++i) std::printf("  after link %.1fs: %.3f\n", 0.5 * i, peakSince(0.5));
@@ -617,7 +621,7 @@ int main(int argc, char** argv)
     std::printf("after letting go: %.3f, then %.4f\n", after, released);
 
     // ---- play the on-screen keyboard: C4 (white key 14 from C2), held for 4 s
-    const int keyX = X(21.5 * 1020 / 50), keyY = X(690);  // C4: 21 white keys up from C1
+    const int keyX = X(21.5 * 1020 / 50), keyY = Y(690);  // C4: 21 white keys up from C1
     PostMessageA(child, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(keyX, keyY));
     const float key = peakSince(4.0);  // the 13 s snapshot: C4 lit up
     PostMessageA(child, WM_LBUTTONUP, 0, MAKELPARAM(keyX, keyY));
@@ -625,22 +629,22 @@ int main(int argc, char** argv)
     std::printf("on-screen key C4: peak %.3f, after letting go %.4f\n", key, keyOff);
 
     // ---- POLY -> MONO, then two overlapping notes play as one voice
-    click(child, X(8 + 45), X(500 + 38));
+    click(child, X(8 + 45), Y(500 + 38));
     std::printf("POLY switch: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
     const bool mono = gLastParam == base + 20 && gLastValue == 0;
     // ---- turn up OSC B's LEVEL
-    drag(child, X(924), X(189), X(924), X(189 - 80));
+    drag(child, X(924), Y(189), X(924), Y(189 - 80));
     std::printf("OSC B LEVEL dragged up: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
     const bool levelUp = gLastParam == base + 12 && gLastValue > 0.3;
     // ---- type a shape: NEW f(t) on OSC A, x = sin(5t), y = cos(4t), Enter
-    click(child, X(897), X(122));
+    click(child, X(897), Y(122));
     auto press = [&](WPARAM vk) { PostMessageA(child, WM_KEYDOWN, vk, 0); PostMessageA(child, WM_KEYUP, vk, 0xC0000001); pump(0.05); };
     auto type = [&](const char* t) { for (; *t; ++t) { PostMessageA(child, WM_CHAR, (WPARAM)*t, 0); pump(0.02); } };
     type("sin(5tx"); press(VK_BACK); type(")"); press(VK_TAB); type("cos(4t)");  // Backspace takes the x back out
     pump(0.5);  // the 13 s snapshot may land around here
     press(VK_RETURN);
     pump(0.5);
-    click(child, X(696), X(122));  // +: a second slot on OSC A
+    click(child, X(696), Y(122));  // +: a second slot on OSC A
     Stream st;
     v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&st);
     const std::string blob(st.data.begin(), st.data.end());
@@ -653,10 +657,27 @@ int main(int argc, char** argv)
         for (char& ch : shown) if (ch == 0) ch = '~';
         std::printf("state: %s\n", shown.c_str());
     }
+    // ---- turn the filter's CUTOFF knob down
+    drag(child, X(494), Y(538), X(494), Y(538 + 60));
+    std::printf("CUTOFF dragged down: param %d -> %.3f\n", gLastParam.load(), gLastValue.load());
+    const bool cutoffDown = gLastParam == base + 67 && gLastValue < 0.8;
     midi(48, 110); pump(0.3); midi(55, 110);
     const float monoPk = peakSince(4.0);  // the 19.5 s snapshot
     midi(48, 0); midi(55, 0);
     pump(1.0);
+
+    // ---- presets: open the menu, pick BASS / SUB SCOPE (row 3: INIT, # BASS, SUB SCOPE), play it
+    click(child, X(300), X(14));
+    click(child, X(250), X(28 + 4 + 2 * 16 + 8));
+    Stream ps;
+    v3_cpp_obj(comp)->get_state(comp, (v3_bstream**)&ps);
+    const std::string pblob(ps.data.begin(), ps.data.end());
+    const bool presetSaved = pblob.find("SUB SCOPE") != std::string::npos;
+    midi(36, 110);
+    const float presetPk = peakSince(1.0);
+    midi(36, 0);
+    pump(0.5);
+    std::printf("preset SUB SCOPE: saved %s, plays peak %.3f\n", presetSaved ? "yes" : "NO", presetPk);
     std::printf("MONO notes with both oscillators: peak %.3f\n", monoPk);
 
     // ---- close the window, stop audio, unload (what FL does when you remove the plugin)
@@ -690,6 +711,8 @@ int main(int argc, char** argv)
     CHECK(levelUp, "dragging OSC B LEVEL up should raise it");
     CHECK(monoPk > 0.05f, "MONO notes make sound");
     CHECK(typed, "a typed shape should be saved with the project");
+    CHECK(cutoffDown, "dragging CUTOFF down should lower it");
+    CHECK(presetSaved && presetPk > 0.05f, "picking a preset from the menu should load it and play");
     CHECK(slotAdded, "+ should add a slot through the A Shapes parameter");
     std::printf("ALL OK\n");
     return 0;

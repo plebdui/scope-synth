@@ -14,6 +14,7 @@
 #include "ScopeSynthShared.hpp"
 #include "CrtTube.hpp"
 #include "MonoFont.hpp"
+#include "Presets.hpp"
 #include "OpenGL.hpp"
 
 #include <chrono>
@@ -21,6 +22,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -29,7 +32,8 @@ START_NAMESPACE_DISTRHO
 using namespace ss;
 
 // layout, in window units (multiplied by the host's scale factor)
-static constexpr float kW = 1020, kH = 700;
+static constexpr float kW = 1020, kH = 700;    // below the menu bar
+static constexpr float kTop = 28;              // the menu bar: presets, settings
 static constexpr float kTube = 500;          // the scope, top-left, square
 static constexpr float kR = kTube;           // the column of panels right of it starts here
 static constexpr float kOscY[2] = {0, 140}, kOscH = 140;
@@ -38,8 +42,58 @@ static constexpr float kStripY = 500, kStripH = 90;
 static constexpr float kKeysY = 590, kKeysH = 110;
 static constexpr int kWhiteKeys = 50;        // seven octaves and a top C
 
-// terminal colours: green phosphor on black
-static const Color kBg(5, 8, 6), kFg(90, 255, 120), kBright(200, 255, 210), kDim(45, 130, 65), kFaint(22, 52, 30);
+// terminal colours, set by the theme (⚙ in the menu bar)
+static Color kBg, kFg, kBright, kDim, kFaint;
+struct Theme {
+    const char* name;
+    Color bg, fg, bright, dim, faint;
+    int phosphor;  // the scope's phosphor to match (CrtTube.hpp)
+};
+static const Theme kThemes[] = {
+    {"GREEN", Color(5, 8, 6), Color(90, 255, 120), Color(200, 255, 210), Color(45, 130, 65), Color(22, 52, 30), 1},
+    {"AMBER", Color(10, 7, 3), Color(255, 176, 0), Color(255, 225, 160), Color(140, 95, 10), Color(60, 40, 8), 2},
+    {"CYAN", Color(4, 8, 10), Color(80, 220, 255), Color(200, 245, 255), Color(40, 110, 135), Color(16, 46, 58), 6},
+    {"WHITE", Color(8, 8, 10), Color(225, 228, 235), Color(255, 255, 255), Color(120, 124, 130), Color(45, 47, 52), 18},
+    {"PINK", Color(10, 5, 9), Color(255, 110, 190), Color(255, 205, 235), Color(140, 55, 100), Color(55, 22, 42), 17},
+};
+static constexpr int kNumThemes = sizeof(kThemes) / sizeof(kThemes[0]);
+
+// your settings (just the theme), shared by every copy of the plugin
+static std::filesystem::path settingsFile()
+{
+    namespace fs = std::filesystem;
+#ifdef _WIN32
+    const char* base = std::getenv("APPDATA");
+    return base ? fs::path(base) / "ScopeSynth" / "settings.txt" : fs::path();
+#elif defined(__APPLE__)
+    const char* home = std::getenv("HOME");
+    return home ? fs::path(home) / "Library" / "Application Support" / "ScopeSynth" / "settings.txt" : fs::path();
+#else
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    const char* home = std::getenv("HOME");
+    if (xdg && *xdg) return fs::path(xdg) / "scope-synth" / "settings.txt";
+    return home ? fs::path(home) / ".config" / "scope-synth" / "settings.txt" : fs::path();
+#endif
+}
+static int loadTheme()
+{
+    std::ifstream in(settingsFile());
+    std::string line;
+    while (std::getline(in, line))
+        if (line.rfind("theme=", 0) == 0) {
+            for (int i = 0; i < kNumThemes; ++i)
+                if (line.substr(6) == kThemes[i].name) return i;
+        }
+    return 0;
+}
+static void saveTheme(int t)
+{
+    const std::filesystem::path f = settingsFile();
+    if (f.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(f.parent_path(), ec);
+    std::ofstream(f) << "theme=" << kThemes[t].name << "\n";
+}
 static const Color kErr(255, 95, 80);
 static const Color kSrcCol[2] = {Color(255, 180, 40), Color(80, 220, 255)};  // ENV amber, LFO cyan
 static const char* const kSrcName[2] = {"ENV", "LFO"};
@@ -54,6 +108,8 @@ struct Box {
     bool has(float px, float py) const { return px >= x && px < x + w && py >= y && py < y + h; }
 };
 
+static constexpr float kFilterX = 362;     // the FILTER panel, in the bottom strip
+static const Box kFilterGraph = {kFilterX + 310, kStripY + 16, 180, 66};
 static const Box kHandle[2] = {{kR + 424, kEnvY + 22, 86, 78}, {kR + 424, kLfoY + 22, 86, 78}};
 static const Box kOctDown = {kW - 150, kStripY + 34, 34, 28}, kOctUp = {kW - 46, kStripY + 34, 34, 28};
 
@@ -66,6 +122,11 @@ static Box barChip(int o, int i) { return {kR + 164 + i * kChip, kOscY[o] + kBar
 static Box barNew(int o) { return {kR + 362, kOscY[o] + kBarDY, 70, kBarH}; }
 static Box barEdit(int o) { return {kR + 436, kOscY[o] + kBarDY, 72, kBarH}; }
 
+// the menu bar
+static const Box kPresetPrev = {150, 4, 20, 20}, kPresetName = {174, 4, 300, 20}, kPresetNext = {478, 4, 20, 20};
+static const Box kGear = {kW - 34, 3, 26, 22};
+static constexpr float kMenuRow = 16;
+
 // the equation editor, over the scope
 static const Box kEdPreview = {50, 48, 400, 222}, kEdField[2] = {{86, 288, 380, 24}, {86, 320, 380, 24}};
 static const Box kEdSave = {50, 452, 120, 28}, kEdCancel = {190, 452, 120, 28}, kEdDelete = {330, 452, 120, 28};
@@ -73,7 +134,7 @@ static const Box kEdSave = {50, 452, 120, 28}, kEdCancel = {190, 452, 120, 28}, 
 class ScopeSynthUI : public UI {
 public:
     ScopeSynthUI()
-        : UI((uint)kW, (uint)kH)
+        : UI((uint)kW, (uint)(kH + kTop))
     {
         createFontFromMemory("mono", kMonoFont, kMonoFontSize, false);
         for (int p = 0; p < kParamCount; ++p)
@@ -91,9 +152,12 @@ public:
         fCtls.push_back({kLegato, 100, kStripY, 90, kStripH});
         fCtls.push_back({kGlide, 192, kStripY, 80, kStripH});
         fCtls.push_back({kVolume, 274, kStripY, 80, kStripH});
+        fCtls.push_back({kFilterType, kFilterX + 88, kStripY + 4, 84, kStripH - 4});
+        fCtls.push_back({kCutoff, kFilterX + 174, kStripY + 4, 64, kStripH - 4});
+        fCtls.push_back({kRes, kFilterX + 240, kStripY + 4, 64, kStripH - 4});
 
         fTube.mode = crt::kXY;
-        fTube.phosphor = 1;  // P1 green
+        applyTheme(loadTheme());
         fTube.flaws = 1;
         fTube.autoGain = true;
         fLast = std::chrono::steady_clock::now();
@@ -114,7 +178,13 @@ protected:
     // a project opened (or the plugin's own saved shapes came back)
     void stateChanged(const char* key, const char* value) override
     {
-        if (std::strcmp(key, "shapes") != 0 || !value) return;
+        if (!value) return;
+        if (std::strcmp(key, "preset") == 0) {
+            fPresetName = value;
+            repaint();
+            return;
+        }
+        if (std::strcmp(key, "shapes") != 0) return;
         fSet.load(value);
         repaint();
     }
@@ -205,14 +275,17 @@ protected:
         rect(0, 0, getWidth(), getHeight());
         fillColor(kBg);
         fill();
+        const float top = kTop * s;
         beginPath();
-        rect(0, 0, tw, tw);
-        fillPaint(imagePattern(0, 0, tw, tw, 0, fImage, 1.0f));
+        rect(0, top, tw, tw);
+        fillPaint(imagePattern(0, top, tw, tw, 0, fImage, 1.0f));
         fill();
 
         save();
         scale(s, s);
         fontFace("mono");
+        drawMenuBar();
+        translate(0, kTop);  // everything else sits under the menu bar
         drawScopeLabels();
         if (fEdit) drawEditor();
         for (int o = 0; o < 2; ++o)
@@ -237,6 +310,11 @@ protected:
             fill();
         }
         restore();
+        save();
+        scale(s, s);
+        fontFace("mono");
+        drawMenus();  // open menus go over everything
+        restore();
 
         // testing hook: snapshot the window 3s, 7s, 13s and 19.5s after opening
         if (!fDumpPath.empty() && fDumps < 4) {
@@ -254,9 +332,10 @@ protected:
     bool onMouse(const MouseEvent& ev) override
     {
         const float s = (float)getScaleFactor();
-        const float x = (float)ev.pos.getX() / s, y = (float)ev.pos.getY() / s;
+        const float x = (float)ev.pos.getX() / s, wy = (float)ev.pos.getY() / s, y = wy - kTop;
         fMouseX = x;
         fMouseY = y;
+        if (ev.press && menuClick(ev.button, x, wy)) return true;
         if (!ev.press) {
             if (fKbNote >= 0) {
                 playNote(fKbNote, 0);
@@ -315,7 +394,7 @@ protected:
             }
         const Ctl* c = ctlAt(x, y);
         if (!c) return false;
-        const Kind kind = kInfo[c->param].kind;
+        const Kind kind = info(c->param).kind;
         if (kind == kSwitch) {
             setValue(c->param, fValues[c->param] > 0.5f ? 0.0f : 1.0f, true);
         } else if (kind == kChoice) {
@@ -332,9 +411,13 @@ protected:
     bool onMotion(const MotionEvent& ev) override
     {
         const float s = (float)getScaleFactor();
-        const float x = (float)ev.pos.getX() / s, y = (float)ev.pos.getY() / s;
+        const float x = (float)ev.pos.getX() / s, y = (float)ev.pos.getY() / s - kTop;
         fMouseX = x;
         fMouseY = y;
+        if (fMenu) {
+            repaint();
+            return true;
+        }
         if (fLinkSrc >= 0) {
             repaint();
             return true;
@@ -352,12 +435,12 @@ protected:
         const int p = fDragParam;
         const float dy = (fDragY - y) / 200.0f;
         float v;
-        if (p >= kModBase) {
+        if (isMod(p)) {
             v = std::clamp(fDragStart + dy * 2, -1.0f, 1.0f);
             if (std::fabs(v) < 0.02f) v = 0.0001f;  // keep the link while passing through 0
         } else {
             v = fromNorm(p, toNorm(p, fDragStart) + dy);
-            if (kInfo[p].kind == kInt) v = std::round(v);
+            if (info(p).kind == kInt) v = std::round(v);
         }
         setValue(p, v, false);
         return true;
@@ -366,11 +449,11 @@ protected:
     bool onScroll(const ScrollEvent& ev) override
     {
         const float s = (float)getScaleFactor();
-        const Ctl* c = ctlAt((float)ev.pos.getX() / s, (float)ev.pos.getY() / s);
+        const Ctl* c = ctlAt((float)ev.pos.getX() / s, (float)ev.pos.getY() / s - kTop);
         if (!c || ev.delta.getY() == 0) return false;
         const int p = c->param;
         const float dir = ev.delta.getY() > 0 ? 1.0f : -1.0f;
-        const Kind kind = kInfo[p].kind;
+        const Kind kind = info(p).kind;
         float v;
         if (kind == kSwitch) v = dir > 0 ? 1.0f : 0.0f;
         else if (kind == kInt || kind == kChoice) v = std::clamp(std::round(fValues[p] + dir), paramMin(p), paramMax(p));
@@ -409,6 +492,165 @@ private:
     int fEditOsc = 0, fEditId = -1, fFocus = 0;  // fEditId: the typed shape being edited, -1 = a new one
     std::string fField[2], fEditErr;
     CustomShape fPreview;
+
+    // ---- menu bar: presets and settings
+    enum { kNoMenu, kPresetMenu, kThemeMenu };
+    int fMenu = kNoMenu;
+    int fTheme = 0;
+    std::string fPresetName = "INIT";
+
+    void applyTheme(int t)
+    {
+        fTheme = std::clamp(t, 0, kNumThemes - 1);
+        const Theme& th = kThemes[fTheme];
+        kBg = th.bg; kFg = th.fg; kBright = th.bright; kDim = th.dim; kFaint = th.faint;
+        fTube.phosphor = th.phosphor;
+        repaint();
+    }
+
+    // the preset menu's rows: INIT, then each category's name and its presets
+    struct Row { std::string text; int preset; };  // preset -1: a category name
+    std::vector<Row> presetRows() const
+    {
+        std::vector<Row> rows;
+        std::string cat;
+        const auto& list = presets();
+        for (int i = 0; i < (int)list.size(); ++i) {
+            if (list[i].category != cat) {
+                cat = list[i].category;
+                rows.push_back({"# " + cat, -1});
+            }
+            rows.push_back({list[i].name, i});
+        }
+        return rows;
+    }
+    Box presetMenuBox() const { return {kPresetName.x, kTop, kPresetName.w, presetRows().size() * kMenuRow + 8}; }
+    Box themeMenuBox() const { return {kW - 160, kTop, 154, (kNumThemes + 1) * kMenuRow + 8}; }
+
+    int presetIndex() const
+    {
+        const auto& list = presets();
+        for (int i = 0; i < (int)list.size(); ++i)
+            if (fPresetName == list[i].name) return i;
+        return -1;
+    }
+
+    void loadPreset(int i)
+    {
+        const auto& list = presets();
+        i = (i + (int)list.size()) % (int)list.size();
+        float v[kParamCount];
+        list[i].values(v);
+        for (int p = 0; p < kParamCount; ++p)
+            setValue(p, v[p], true);
+        for (int o = 0; o < 2; ++o) fSel[o] = 0;
+        fPresetName = list[i].name;
+        setState("preset", fPresetName.c_str());
+    }
+
+    // clicks on the menu bar or an open menu (wy: from the top of the window)
+    bool menuClick(int button, float x, float wy)
+    {
+        if (fMenu == kPresetMenu) {
+            const Box b = presetMenuBox();
+            fMenu = kNoMenu;
+            repaint();
+            if (b.has(x, wy) && button == 1) {
+                const int r = (int)((wy - b.y - 4) / kMenuRow);
+                const auto rows = presetRows();
+                if (r >= 0 && r < (int)rows.size() && rows[r].preset >= 0) loadPreset(rows[r].preset);
+            }
+            return true;  // a click anywhere closes it
+        }
+        if (fMenu == kThemeMenu) {
+            const Box b = themeMenuBox();
+            fMenu = kNoMenu;
+            repaint();
+            const int r = (int)((wy - b.y - 4) / kMenuRow) - 1;  // row 0 is the title
+            if (b.has(x, wy) && button == 1 && r >= 0 && r < kNumThemes) {
+                applyTheme(r);
+                saveTheme(r);
+            }
+            return true;
+        }
+        if (wy >= kTop || button != 1) return wy < kTop;
+        if (kPresetPrev.has(x, wy) || kPresetNext.has(x, wy)) loadPreset(std::max(presetIndex(), 0) + (kPresetNext.has(x, wy) ? 1 : -1));
+        else if (kPresetName.has(x, wy)) fMenu = kPresetMenu;
+        else if (kGear.has(x, wy)) fMenu = kThemeMenu;
+        repaint();
+        return true;
+    }
+
+    void drawMenuBar()
+    {
+        fillBox({0, 0, kW, kTop}, kBg);
+        fillBox({0, kTop - 1, kW, 1}, kDim);
+        label(12, kTop / 2, "scope-synth", kFg, 12);
+        button(kPresetPrev, "<", kFg);
+        button(kPresetNext, ">", kFg);
+        outline(kPresetName, fMenu == kPresetMenu ? kFg : kDim);
+        const int i = presetIndex();
+        std::string name = fPresetName;
+        if (i >= 0 && *presets()[i].category) name = std::string(presets()[i].category) + " / " + name;
+        label(kPresetName.x + 10, kPresetName.y + kPresetName.h / 2 + 0.5f, name.c_str(), kBright, 11);
+        label(kPresetName.x + kPresetName.w - 10, kPresetName.y + kPresetName.h / 2 + 0.5f, "v", kDim, 10, ALIGN_RIGHT | ALIGN_MIDDLE);
+        // the settings gear
+        const float cx = kGear.x + kGear.w / 2, cy = kGear.y + kGear.h / 2;
+        const Color& gc = fMenu == kThemeMenu ? kBright : kFg;
+        beginPath();
+        for (int t = 0; t < 8; ++t) {
+            const float a = t * 3.14159265f / 4;
+            moveTo(cx + std::cos(a) * 5, cy + std::sin(a) * 5);
+            lineTo(cx + std::cos(a) * 8, cy + std::sin(a) * 8);
+        }
+        strokeColor(gc);
+        strokeWidth(2.2f);
+        stroke();
+        beginPath();
+        circle(cx, cy, 5.5f);
+        strokeWidth(1.6f);
+        stroke();
+        beginPath();
+        circle(cx, cy, 2);
+        fillColor(gc);
+        fill();
+    }
+
+    void drawMenus()
+    {
+        const float my = fMouseY + kTop;
+        if (fMenu == kPresetMenu) {
+            const Box b = presetMenuBox();
+            fillBox(b, kBg);
+            outline(b, kFg);
+            const auto rows = presetRows();
+            const int cur = presetIndex();
+            for (size_t r = 0; r < rows.size(); ++r) {
+                const Box rb = {b.x + 2, b.y + 4 + r * kMenuRow, b.w - 4, kMenuRow};
+                if (rows[r].preset < 0) {
+                    label(rb.x + 8, rb.y + rb.h / 2, rows[r].text.c_str(), kDim, 10);
+                    continue;
+                }
+                const bool hot = rb.has(fMouseX, my);
+                if (hot) fillBox(rb, kFg);
+                label(rb.x + 22, rb.y + rb.h / 2, rows[r].text.c_str(), hot ? kBg : rows[r].preset == cur ? kBright : kFg, 11);
+                if (rows[r].preset == cur) label(rb.x + 10, rb.y + rb.h / 2, ">", hot ? kBg : kBright, 11);
+            }
+        } else if (fMenu == kThemeMenu) {
+            const Box b = themeMenuBox();
+            fillBox(b, kBg);
+            outline(b, kFg);
+            label(b.x + 10, b.y + 4 + kMenuRow / 2, "# THEME", kDim, 10);
+            for (int t = 0; t < kNumThemes; ++t) {
+                const Box rb = {b.x + 2, b.y + 4 + (t + 1) * kMenuRow, b.w - 4, kMenuRow};
+                const bool hot = rb.has(fMouseX, my);
+                if (hot) fillBox(rb, kFg);
+                fillBox({rb.x + 22, rb.y + 4, 10, 8}, kThemes[t].fg);  // a swatch
+                label(rb.x + 40, rb.y + rb.h / 2, kThemes[t].name, hot ? kBg : t == fTheme ? kBright : kFg, 11);
+                if (t == fTheme) label(rb.x + 8, rb.y + rb.h / 2, ">", hot ? kBg : kBright, 11);
+            }
+        }
+    }
 
     void startDrag(int p, float y)
     {
@@ -873,6 +1115,7 @@ private:
     void drawStrip()
     {
         outline({4, kStripY + 2, kW - 8, kStripH - 6}, kFaint);
+        drawFilter();
         // keyboard octave
         button(kOctDown, "<", kFg);
         button(kOctUp, ">", kFg);
@@ -881,6 +1124,41 @@ private:
         const float mid = (kOctDown.x + kOctDown.w + kOctUp.x) / 2;
         label(mid, kOctDown.y + kOctDown.h / 2, buf, kBright, 11, ALIGN_CENTER | ALIGN_MIDDLE);
         label(mid, kStripY + 20, "KEYS", kDim, 10, ALIGN_CENTER | ALIGN_MIDDLE);
+    }
+
+    // the FILTER panel: how loud each frequency comes out, as its controls (and links) set it now
+    void drawFilter()
+    {
+        panel({kFilterX, kStripY, 498, kStripH - 2}, "FILTER");
+        const Box& g = kFilterGraph;
+        outline(g, kFaint);
+        const int type = std::clamp((int)std::lround(fValues[kFilterType]), 0, 4);
+        const float fc = liveValue(kCutoff), k = 1.414f - 1.38f * std::clamp(liveValue(kRes), 0.0f, 1.0f);
+        auto db = [&](float f) {  // the analog filter the SVF follows: H(s), s = jf/fc
+            const float w = f / fc;
+            const float re = 1 - w * w, im = k * w, den = re * re + im * im;
+            float mag2;
+            switch (type) {
+            case 1: { const float im2 = 1.414f * w; mag2 = (1 / den) * (1 / (re * re + im2 * im2)); break; }
+            case 2: mag2 = w * w * w * w / den; break;
+            case 3: mag2 = k * k * w * w / den; break;
+            case 4: mag2 = re * re / den; break;
+            default: mag2 = 1 / den; break;
+            }
+            return 10 * std::log10(std::max(mag2, 1e-9f));
+        };
+        // 0 dB line, then the curve: 20 Hz .. 20 kHz across, +18 .. -42 dB down
+        auto Y = [&](float d) { return g.y + 3 + (g.h - 6) * (18 - std::clamp(d, -42.0f, 18.0f)) / 60; };
+        fillBox({g.x + 1, Y(0), g.w - 2, 1}, kFaint);
+        beginPath();
+        for (int i = 0; i <= 120; ++i) {
+            const float f = 20 * std::pow(1000.0f, i / 120.0f);
+            const float x = g.x + 2 + (g.w - 4) * i / 120.0f;
+            if (i == 0) moveTo(x, Y(db(f))); else lineTo(x, Y(db(f)));
+        }
+        strokeColor(kFg);
+        strokeWidth(1.3f);
+        stroke();
     }
 
     void drawScopeLabels()
@@ -917,6 +1195,11 @@ private:
             else std::snprintf(out, n, "%.2fs", v);
             break;
         case kLfoRate: std::snprintf(out, n, "%.2fHz", v); break;
+        case kFilterType: std::snprintf(out, n, "%s", kFilterTypes[std::clamp((int)std::lround(v), 0, 4)]); break;
+        case kCutoff:
+            if (v < 1000) std::snprintf(out, n, "%dHz", (int)std::lround(v));
+            else std::snprintf(out, n, "%.1fk", v / 1000);
+            break;
         case kLfoWave: std::snprintf(out, n, "%s", kLfoWaves[std::clamp((int)std::lround(v), 0, 4)]); break;
         case kPoly: std::snprintf(out, n, "%s", v > 0.5f ? "POLY" : "MONO"); break;
         case kLegato: std::snprintf(out, n, "%s", v > 0.5f ? "ON" : "OFF"); break;
@@ -938,7 +1221,7 @@ private:
     void drawCtl(const Ctl& c)
     {
         const int p = c.param;
-        const Kind kind = kInfo[p].kind;
+        const Kind kind = info(p).kind;
         const float cx = c.x + c.w / 2;
         char buf[48];
         valueText(p, buf, sizeof(buf));
@@ -946,7 +1229,7 @@ private:
         if (fLinkSrc >= 0 && d >= 0)  // dragging a link: show where it can go
             outline({c.x + 2, c.y + 2, c.w - 4, c.h - 4}, Color(kSrcCol[fLinkSrc].red, kSrcCol[fLinkSrc].green, kSrcCol[fLinkSrc].blue, 0.7f));
         const bool dim = (p == kAShape || p == kBShape) && slots(p == kBShape) < 2;  // one shape: nothing to morph
-        label(cx, c.y + 12, kInfo[p].caption, dim ? kFaint : kDim, 9.5f, ALIGN_CENTER | ALIGN_MIDDLE);
+        label(cx, c.y + 12, info(p).caption, dim ? kFaint : kDim, 9.5f, ALIGN_CENTER | ALIGN_MIDDLE);
         if (kind == kSwitch) {
             const bool on = fValues[p] > 0.5f;
             label(cx, c.y + 38, on ? "[x]" : "[ ]", kFg, 14, ALIGN_CENTER | ALIGN_MIDDLE);

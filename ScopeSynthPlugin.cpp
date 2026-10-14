@@ -4,7 +4,7 @@
 START_NAMESPACE_DISTRHO
 
 ScopeSynthPlugin::ScopeSynthPlugin()
-    : Plugin(ss::kParamCount, 0, 1)
+    : Plugin(ss::kParamCount, 0, 2)
 {
     fShapesCur.reset(new ss::ShapeSet());
     fShapes.store(fShapesCur.get());
@@ -13,9 +13,16 @@ ScopeSynthPlugin::ScopeSynthPlugin()
     fEngine.setSampleRate((float)getSampleRate());
 }
 
-// the shapes, saved with the project (Shapes.hpp has the format)
-void ScopeSynthPlugin::initState(uint32_t, State& state)
+// saved with the project: the typed-in shapes (Shapes.hpp has the format), and
+// the name of the preset last picked (only the window shows it)
+void ScopeSynthPlugin::initState(uint32_t index, State& state)
 {
+    if (index == 1) {
+        state.key = "preset";
+        state.label = "Preset";
+        state.defaultValue = "INIT";
+        return;
+    }
     state.key = "shapes";
     state.label = "Shapes";
     state.defaultValue = ss::ShapeSet().save().c_str();
@@ -46,8 +53,8 @@ void ScopeSynthPlugin::initParameter(uint32_t index, Parameter& p)
     p.ranges.min = paramMin(index);
     p.ranges.max = paramMax(index);
     p.ranges.def = paramDefault(index);
-    if (index >= (uint32_t)kModBase) {  // ENV / LFO link amounts
-        const int src = (index - kModBase) / kNumDests, d = (index - kModBase) % kNumDests;
+    int src, d;
+    if (modOf((int)index, src, d)) {  // ENV / LFO link amounts
         p.name = String(src == kSrcEnv ? "ENV > " : "LFO > ") + kInfo[kDests[d]].name;
         p.symbol = String(src == kSrcEnv ? "env_" : "lfo_") + kInfo[kDests[d]].symbol;
         return;
@@ -65,7 +72,13 @@ void ScopeSynthPlugin::initParameter(uint32_t index, Parameter& p)
         p.enumValues.count = 5; p.enumValues.restrictedMode = true; p.enumValues.values = v;
         p.enumValues.deleteLater = false;
     }
-    if (index >= (uint32_t)kASlot0 && index != (uint32_t)kBSlots) {  // a slot: the shapes by name
+    if (index == kFilterType) {
+        static ParameterEnumerationValue v[5];
+        for (int i = 0; i < 5; ++i) { v[i].value = (float)i; v[i].label = kFilterTypes[i]; }
+        p.enumValues.count = 5; p.enumValues.restrictedMode = true; p.enumValues.values = v;
+        p.enumValues.deleteLater = false;
+    }
+    if (index >= (uint32_t)kASlot0 && index < (uint32_t)kModBase && index != (uint32_t)kBSlots) {  // a slot: the shapes by name
         static ParameterEnumerationValue v[kMaxShapes];
         static std::string names[kMaxShapes];
         for (int i = 0; i < kMaxShapes; ++i) {

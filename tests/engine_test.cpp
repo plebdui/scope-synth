@@ -1,5 +1,6 @@
 // Checks the sound engine on its own: g++ -std=c++17 -O2 -I. tests/engine_test.cpp -o engine_test && ./engine_test
 #include "SynthEngine.hpp"
+#include "Presets.hpp"
 #include <chrono>
 #include <cstdio>
 #include <vector>
@@ -210,6 +211,61 @@ int main()
         EXPECT(secs < 1.0f && peak(big) <= 1.0f, "16 notes x 2 oscillators x 8 voices: 2 s of sound in %.0f ms (%.0f%% of one core)", secs * 1000, secs / 2 * 100);
     }
     {
+        // the filter: how loud the harmonics of a bright shape (the cube) are below 500 Hz and above 2 kHz
+        auto harm = [&](const std::vector<float>& x, int from, int len, float f) {  // Goertzel: one frequency's power
+            const double w = 2 * M_PI * f / sr, c = 2 * std::cos(w);
+            double s1 = 0, s2 = 0;
+            for (int i = from; i < from + len; ++i) { const double s0 = x[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+            return s1 * s1 + s2 * s2 - c * s1 * s2;
+        };
+        auto split = [&](const std::vector<float>& x, int from, int len, double& lowE, double& highE) {
+            lowE = highE = 0;
+            for (int h = 1; h <= 60; ++h) {
+                const double e = harm(x, from, len, 110.0f * h);
+                if (110 * h < 500) lowE += e;
+                else if (110 * h > 2000) highE += e;
+            }
+        };
+        auto bands = [&](double& lowE, double& highE) {
+            Engine e(P); e.setSampleRate(sr);
+            e.noteOn(45, 127);  // A2, 110 Hz: plenty of harmonics both sides
+            std::vector<float> r;
+            auto l = run(e, 24000, &r);
+            split(l, 4800, 19200, lowE, highE);  // 19200 samples = whole cycles of 110 Hz at 48 kHz (44)
+            return peak(l);
+        };
+        defaults();
+        slotsOf(0, {10});
+        double open0, open1, lo0, lo1, hi0, hi1, bp0, bp1;
+        bands(open0, open1);
+        P[kCutoff] = 500;
+        float pk = bands(lo0, lo1);
+        EXPECT(lo1 / lo0 < 0.1 * open1 / open0, "LP12 at 500 Hz: highs drop (high/low %.4f -> %.4f)", open1 / open0, lo1 / lo0);
+        P[kFilterType] = 1;
+        double l24a, l24b;
+        bands(l24a, l24b);
+        EXPECT(l24b / l24a < 0.5 * lo1 / lo0, "LP24 cuts harder than LP12 (%.5f vs %.4f)", l24b / l24a, lo1 / lo0);
+        P[kFilterType] = 2; P[kCutoff] = 2000;
+        bands(hi0, hi1);
+        EXPECT(hi1 / hi0 > 3 * open1 / open0, "HP at 2 kHz: lows drop (high/low %.4f -> %.4f)", open1 / open0, hi1 / hi0);
+        P[kFilterType] = 0; P[kCutoff] = 1000; P[kRes] = 1;
+        pk = bands(bp0, bp1);
+        EXPECT(pk <= 1.0f && std::isfinite(pk), "full resonance stays stable, peak %.2f", pk);
+        // ENV linked to cutoff: bright at the start of the note, dark once it decays
+        defaults();
+        slotsOf(0, {10});
+        P[kCutoff] = 200; P[kSustain] = 0; P[kDecay] = 0.2f;
+        P[modParam(kSrcEnv, destIndex(kCutoff))] = 0.8f;
+        Engine e(P); e.setSampleRate(sr);
+        e.noteOn(45, 127);
+        std::vector<float> r;
+        auto l = run(e, 9600, &r);
+        double e0, e1, d0, d1;
+        split(l, 0, 1309, e0, e1);   // ~12 cycles at the start
+        split(l, 8291, 1309, d0, d1);  // and once it has decayed
+        EXPECT(e1 / e0 > 10 * d1 / d0, "ENV -> CUTOFF sweeps it down (high/low %.4f at the start, %.6f later)", e1 / e0, d1 / d0);
+    }
+    {
         // typed equations
         Expr x;
         EXPECT(x.compile("sin(3t) + 0.5cos(2*t)^2").empty() && std::fabs(x.eval(1, 0) - (std::sin(3) + 0.5 * std::pow(std::cos(2), 2))) < 1e-9,
@@ -255,6 +311,21 @@ int main()
         const double h = energy(0), c = energy(1), half = energy(0.5f);
         EXPECT(std::fabs(h - c) > 1e-4 && std::fabs(half - h) > 1e-5 && std::fabs(half - c) > 1e-5,
                "MORPH 0 / 50%% / 100%% through HEART > CUBE all differ (L*R %.4f %.4f %.4f)", h, half, c);
+    }
+    // every factory preset: a note and a chord make sound, cleanly
+    for (const Preset& pr : presets()) {
+        pr.values(P);
+        gSet = ShapeSet();
+        Engine e(P); e.setSampleRate(sr);
+        e.noteOn(48, 110);
+        auto one = run(e, 24000);
+        e.noteOn(52, 110); e.noteOn(55, 110); e.noteOn(60, 110);
+        auto chord = run(e, 48000);
+        for (int n : {48, 52, 55, 60}) e.noteOff(n);
+        auto tail = run(e, 48000 * 10);  // the longest release is 4 s
+        const float rms1 = [&] { double s2 = 0; for (float v : one) s2 += v * v; return (float)std::sqrt(s2 / one.size()); }();
+        EXPECT(peak(one) > 0.02f && rms1 > 0.003f && peak(chord) <= 1.0f && e.activeVoices() == 0,
+               "%-5s %-15s note peak %.2f rms %.3f, chord peak %.2f, rings out", pr.category, pr.name, peak(one), rms1, peak(chord));
     }
     std::printf(fails ? "%d FAILED\n" : "ALL OK\n", fails);
     return fails != 0;
